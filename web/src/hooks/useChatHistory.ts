@@ -10,6 +10,7 @@ export interface StoredMsg {
   role: 'user' | 'assistant'
   content: string
   citations?: unknown[]
+  charts?: unknown[]
 }
 export interface ChatConversation {
   id: string

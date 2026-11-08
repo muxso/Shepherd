@@ -9,6 +9,7 @@ import re
 import sqlite3
 import time
 from pathlib import Path
+from urllib.parse import urlsplit, urljoin
 
 
 def clean_question(value):
@@ -24,6 +25,30 @@ def incoming_text(body):
         items = (body.get("mixed") or {}).get("msg_item", [])
         return clean_question("\n".join(str((item.get("text") or {}).get("content") or "") for item in items if item.get("msgtype") == "text"))
     return ""
+
+
+def citation_footer(citations, public_url=""):
+    lines = []
+    for index, source in enumerate(citations[:20], 1):
+        title = str(source.get("title") or "项目资料").replace("\n", " ")[:120]
+        title = title.replace("[", "\\[").replace("]", "\\]")
+        url = str(source.get("url") or "")
+        if url.startswith("/") and not url.startswith("//"):
+            base = urlsplit(public_url)
+            url = urljoin(public_url, url) if base.scheme in ("http", "https") and base.netloc and not base.username and not base.password else ""
+        parsed = urlsplit(url)
+        safe = parsed.scheme in ("http", "https") and parsed.netloc and not parsed.username and not parsed.password and not re.search(r"[\s()<>\\]", url)
+        label = f"[{title}]({url})" if safe else title
+        date = str(source.get("occurred_at") or "")[:10]
+        lines.append(f"[{index}] {label}"+(f" · {date}" if date else ""))
+    return "\n\n资料来源：\n"+"\n".join(lines) if lines else ""
+
+
+def absolute_source_links(text, public_url):
+    base = urlsplit(public_url)
+    if base.scheme not in ("http", "https") or not base.netloc or base.username or base.password:
+        return text
+    return re.sub(r"\]\((/[^/\s)<>][^\s)<>]*)\)", lambda m: "]("+urljoin(public_url, m.group(1))+")", text)
 
 
 def utf8_limit(value, limit=19000):
@@ -140,3 +165,80 @@ def render_chart(data, metric, font_path):
     if len(raw) > 2_000_000:
         raise ValueError("统计图超过图片大小限制")
     return {"msgtype": "image", "image": {"base64": base64.b64encode(raw).decode(), "md5": hashlib.md5(raw, usedforsecurity=False).hexdigest()}}
+
+
+def render_grounded_chart(spec, font_path):
+    from PIL import Image, ImageDraw, ImageFont
+    import math
+    if spec.get("kind") == "bar":
+        return render_grounded_bars(spec, font_path)
+    if spec.get("kind") != "activity_heatmap":
+        raise ValueError("unsupported_chart")
+    dates = spec.get("dates") or []
+    rows = spec.get("rows") or []
+    if not 1 <= len(dates) <= 366 or len(rows) > 500:
+        raise ValueError("invalid_chart_size")
+    shown = rows[:60]
+    width = min(2400, max(1100, 260+len(dates)*52))
+    height = max(320, 226+len(shown)*36)
+    picture = Image.new("RGB", (width, height), "#F4F7F6")
+    draw = ImageDraw.Draw(picture)
+    font = lambda size: ImageFont.truetype(font_path, size)
+    draw.rounded_rectangle((20, 20, width-20, height-20), radius=20, fill="white")
+    draw.text((45, 40), str(spec.get("title") or "业务统计图")[:55], font=font(27), fill="#274B44")
+    draw.text((45, 82), f"{spec.get('from', '')} — {spec.get('through', '')} · 上海时间 · {spec.get('metric', '')}", font=font(17), fill="#64746F")
+    cell_width = (width-290)/len(dates)
+    maximum = max((value for row in shown for value in row.get("values", []) if isinstance(value, (int, float)) and math.isfinite(value) and value >= 0), default=1) or 1
+    interval = max(1, math.ceil(48/cell_width))
+    for column, day in enumerate(dates):
+        left = 240+column*cell_width
+        if column % interval == 0:
+            draw.text((left, 116), str(day)[5:10], font=font(14), fill="#64746F")
+    for index, row in enumerate(shown):
+        top = 145+index*36
+        draw.text((45, top+3), str(row.get("label") or "未关联账号")[:12], font=font(19), fill="#263F39")
+        for column, day in enumerate(dates):
+            values = row.get("values", [])
+            value = values[column] if column < len(values) else 0
+            value = value if isinstance(value, (int, float)) and math.isfinite(value) and value > 0 else 0
+            factor = 0.15+0.7*math.sqrt(value/maximum) if value else 0
+            shade = tuple(round(245*(1-factor)+green*factor) for green in (72, 137, 119))
+            left = 240+column*cell_width
+            draw.rounded_rectangle((left, top, left+max(1, cell_width-3), top+29), radius=min(4, cell_width/3), fill=shade)
+            if value and cell_width >= 28:
+                draw.text((left+4, top+4), str(int(value)), font=font(15), fill="#183F34")
+    footer = f"已采集记录 · 展示 {len(shown)} / {len(rows)} 行 · 空白表示未观测到记录"
+    if spec.get("coverageComplete") is False:
+        footer += " · 采集覆盖不完整"
+    draw.text((45, height-65), footer, font=font(16), fill="#73807C")
+    output = io.BytesIO(); picture.save(output, format="PNG", optimize=True)
+    raw = output.getvalue()
+    if len(raw) > 2_000_000:
+        raise ValueError("chart_exceeds_image_limit")
+    return {"msgtype": "image", "image": {"base64": base64.b64encode(raw).decode(), "md5": hashlib.md5(raw, usedforsecurity=False).hexdigest()}}
+
+
+def render_grounded_bars(spec, font_path):
+    from PIL import Image, ImageDraw, ImageFont
+    import math
+    labels, values = spec.get("labels") or [], spec.get("values") or []
+    if len(labels) != len(values) or len(labels) > 500:
+        raise ValueError("invalid_bar_chart")
+    shown = list(zip(labels, values))[:40]
+    image = Image.new("RGB", (1280, max(320, 210+len(shown)*36)), "#F4F7F6")
+    draw = ImageDraw.Draw(image); font = lambda size: ImageFont.truetype(font_path, size)
+    draw.rounded_rectangle((20, 20, 1260, image.height-20), radius=20, fill="white")
+    draw.text((45, 40), str(spec.get("title") or "业务统计")[:45], font=font(27), fill="#274B44")
+    draw.text((45, 82), f"{spec.get('from', '')} — {spec.get('through', '')} · {spec.get('metric', '')}", font=font(18), fill="#64746F")
+    maximum = max((value for _, value in shown if isinstance(value, (int, float)) and math.isfinite(value) and value > 0), default=1)
+    for index, (label, value) in enumerate(shown):
+        value = value if isinstance(value, (int, float)) and math.isfinite(value) and value > 0 else 0
+        top = 130+index*36
+        draw.text((45, top), str(label)[:12], font=font(18), fill="#263F39")
+        draw.rounded_rectangle((290, top+3, 1120, top+27), radius=5, fill="#EEF3F1")
+        if value: draw.rounded_rectangle((290, top+3, 290+max(5, 830*value/maximum), top+27), radius=5, fill="#5B9A8B")
+        draw.text((1140, top), str(int(value)), font=font(17), fill="#315F52")
+    draw.text((45, image.height-60), f"已采集事实 · 展示 {len(shown)} / {len(labels)} 行 · 统计口径与网页一致", font=font(16), fill="#73807C")
+    output = io.BytesIO(); image.save(output, format="PNG", optimize=True); raw=output.getvalue()
+    if len(raw)>2_000_000:raise ValueError("chart_exceeds_image_limit")
+    return {"msgtype":"image","image":{"base64":base64.b64encode(raw).decode(),"md5":hashlib.md5(raw,usedforsecurity=False).hexdigest()}}

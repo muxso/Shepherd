@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useLocation } from 'react-router-dom'
 import {
   Button, Drawer, Empty, Input, Modal, Popconfirm, Segmented, Select, Table, Tag, Tooltip, message,
 } from 'antd'
@@ -13,6 +14,8 @@ import { useChatHistory, newConversationId, type StoredMsg } from '../hooks/useC
 import { useApp } from '../context'
 import { MarkdownRenderer } from '../components/MarkdownRenderer'
 import LottieLogo from '../components/LottieLogo'
+import OnboardingKnowledge from '../components/OnboardingKnowledge'
+import { GroundedChart, type GroundedChartSpec } from '../components/GroundedChart'
 import { useI18n } from '../i18n'
 
 // ---- decision-chain types (mirror the backend AskTrace/TraceStep) ----
@@ -24,7 +27,15 @@ type TraceStep =
   | { kind: 'llm_generation'; latency_ms: number; answer_chars: number }
   | { kind: string; [k: string]: unknown }
 type AskTrace = { question: string; started_at: string; steps: TraceStep[]; total_ms: number }
-type Citation = { title?: string; heading?: string; doc_id?: string; content_preview?: string; relevance_score?: number }
+type Citation = { title?: string; heading?: string; doc_id?: string; content_preview?: string; relevance_score?: number; url?: string; source_links?: { label: string; url: string }[]; occurred_at?: string | null; indexed_at?: number }
+function referenceUrl(value?: string): string | undefined {
+  if (!value || /[\x00-\x1f\x7f\\]/.test(value) || value.startsWith('//')) return undefined
+  if (value.startsWith('/')) return value
+  try {
+    const url = new URL(value)
+    return ['https:', 'http:'].includes(url.protocol) && !url.username && !url.password ? url.href : undefined
+  } catch { return undefined }
+}
 // Keep code references readable; the full repository/path/commit remains in the tooltip and drawer.
 function sourceLabel(source: Citation): string {
   const full = source.heading || source.title || ''
@@ -38,8 +49,10 @@ type Msg = {
   content: string
   displayed?: number
   citations?: Citation[]
+  charts?: GroundedChartSpec[]
   trace?: AskTrace
   traceOpen?: boolean
+  statusText?: string
   streaming?: boolean
   feedback?: 'up' | 'down'
 }
@@ -378,6 +391,30 @@ export default function KnowledgeQA() {
   const [evalData, setEvalData] = useState<Eval | null>(null)
   const [evalLoading, setEvalLoading] = useState(false)
   const [citePanel, setCitePanel] = useState<Citation | null>(null)
+  const sourceLocation = useLocation()
+  const [sourceLoading, setSourceLoading] = useState(false)
+  const openCitation = (citation: Citation) => {
+    const url = referenceUrl(citation.url)
+    if (url) window.open(url, '_blank', 'noopener,noreferrer')
+    else setCitePanel(citation)
+  }
+  useEffect(() => {
+    const params = new URLSearchParams(sourceLocation.search)
+    const documentId = params.get('document')
+    if (!documentId || !projectId) return
+    let active = true
+    setSourceLoading(true)
+    setCitePanel({ title: t('rag.source', '来源'), doc_id: documentId })
+    api.ragDocument(documentId, params.get('chunk') || undefined).then((doc) => {
+      if (!active) return
+      if (doc.projectId !== projectId) throw new Error(t('rag.wrongSourceProject', '来源不属于当前项目'))
+      setCitePanel({ title: doc.title, doc_id: doc.documentId, source_links: doc.reference.source_links,
+        occurred_at: doc.reference.occurred_at, indexed_at: doc.indexedAt,
+        content_preview: doc.chunks.map((chunk) => [chunk.heading, chunk.content].filter(Boolean).join('\n')).join('\n\n') + (doc.truncated ? '\n\n'+t('rag.sourceTruncated', '仅展示前 100 个片段。') : '') })
+    }).catch((error) => { if (active) { setCitePanel(null); message.error(String(error)) } })
+      .finally(() => { if (active) setSourceLoading(false) })
+    return () => { active = false }
+  }, [projectId, sourceLocation.search, t])
   const [stats, setStats] = useState<{ documents: number; chunks: number } | null>(null)
   // One-time fullscreen Lottie intro (per session), shrinking away to reveal the landing.
   const [intro, setIntro] = useState<boolean>(() => !sessionStorage.getItem('rag_intro_seen'))
@@ -431,7 +468,7 @@ export default function KnowledgeQA() {
     if (!projectId || loading || !messages.length) return
     const stored: StoredMsg[] = messages
       .filter((m) => m.content.trim())
-      .map((m) => ({ role: m.role, content: m.content, citations: m.citations }))
+      .map((m) => ({ role: m.role, content: m.content, citations: m.citations, charts: m.charts }))
     if (stored.length) hist.upsert(sessionId, stored)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [messages, loading])
@@ -459,6 +496,7 @@ export default function KnowledgeQA() {
     setMessages(c.messages.map((m) => ({
       role: m.role, content: m.content, displayed: m.content.length, streaming: false,
       citations: m.citations as Citation[] | undefined,
+      charts: m.charts as GroundedChartSpec[] | undefined,
     })))
   }
 
@@ -474,7 +512,9 @@ export default function KnowledgeQA() {
     const patchLast = (fn: (m: Msg) => Msg) => setMessages((ms) => ms.map((m, i) => (i === ms.length - 1 ? fn(m) : m)))
     try {
       await askStream(projectId, q, history, (ev, data) => {
+        if (ev === 'status') patchLast((m) => ({ ...m, statusText: String(data.message || '') }))
         if (ev === 'sources') patchLast((m) => ({ ...m, citations: (data.sources as Citation[]) || [] }))
+        if (ev === 'chart') patchLast((m) => ({ ...m, charts: [...(m.charts || []), data as unknown as GroundedChartSpec] }))
         else if (ev === 'chunk') {
           // Real token stream: append each delta and show it immediately (streaming IS the animation).
           const delta = (data.delta as string) || ''
@@ -580,6 +620,7 @@ export default function KnowledgeQA() {
         <BulbOutlined style={{ color: 'var(--brand)' }} />
         <b>{t('rag.title', '聊天')}</b>
         <div style={{ flex: 1 }} />
+        <OnboardingKnowledge onAsk={setInput} />
         <Button icon={<DatabaseOutlined />} onClick={() => { loadGroups(); setManageOpen(true) }}>{t('rag.manage', '知识库管理')}</Button>
         <Button icon={<PlusOutlined />} onClick={() => { loadGroups(); setIngestOpen((v) => !v) }}>{t('rag.addKnowledge', '添加知识')}</Button>
       </div>
@@ -646,21 +687,22 @@ export default function KnowledgeQA() {
                       ? <CitedAnswer
                           text={(m.displayed != null ? m.content.slice(0, m.displayed) : m.content) + (m.streaming && (m.displayed ?? 0) >= m.content.length ? ' ▋' : '')}
                           citations={m.citations}
-                          onOpen={(idx) => m.citations?.[idx] && setCitePanel(m.citations[idx])}
+                          onOpen={(idx) => m.citations?.[idx] && openCitation(m.citations[idx])}
                         />
                       : <span>{m.content}</span>}
-                    {m.role === 'assistant' && m.streaming && !m.content && <span style={{ color: 'var(--text-3)' }}>{t('rag.thinking', '思考中')}<span className="dc-dots" /></span>}
+                    {m.role === 'assistant' && m.streaming && !m.content && <span style={{ color: 'var(--text-3)' }}>{m.statusText || t('rag.thinking', '思考中')}<span className="dc-dots" /></span>}
                   </div>
+                  {m.charts?.map((chart, chartIndex) => <GroundedChart key={chartIndex} chart={chart} />)}
                   {!!m.citations?.length && (
                     <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 6 }}>
                       {m.citations.map((c, j) => (
                         <Tooltip key={j} title={`${t('rag.viewSource', '查看原文片段')}: ${c.heading || c.title}`}>
-                          <span data-chip={j + 1} role="button" tabIndex={0} onClick={() => setCitePanel(c)}
-                            onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setCitePanel(c) } }}
+                          <a data-chip={j + 1} href={referenceUrl(c.url)} target={referenceUrl(c.url) ? '_blank' : undefined} rel="noopener noreferrer" role={referenceUrl(c.url) ? 'link' : 'button'} tabIndex={0} onClick={(event) => { if (!referenceUrl(c.url)) { event.preventDefault(); openCitation(c) } }}
+                            onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openCitation(c) } }}
                             style={{ maxWidth: '100%', minWidth: 0, overflowWrap: 'anywhere', fontSize: 12, padding: '3px 8px', borderRadius: 6, background: 'var(--panel-2)', border: '1px solid var(--border-soft)', color: 'var(--text-2)', cursor: 'pointer' }}>
-                            <b style={{ color: 'var(--brand)' }}>[{j + 1}]</b> {sourceLabel(c)}
-                            {c.relevance_score != null && <span style={{ color: 'var(--text-3)' }}> · {c.relevance_score.toFixed(2)}</span>}
-                          </span>
+                            <b style={{ color: 'var(--brand)' }}>[{j + 1}]</b> {sourceLabel(c)} {c.occurred_at && <span> · {c.occurred_at.slice(0, 10)}</span>}
+
+                          </a>
                         </Tooltip>
                       ))}
                     </div>
@@ -774,8 +816,12 @@ export default function KnowledgeQA() {
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 18px', minWidth: 0, maxWidth: '100%', overflowWrap: 'anywhere', fontSize: 12, color: 'var(--text-3)' }}>
               {citePanel.title && !citePanel.heading?.startsWith(citePanel.title) && <span>{t('rag.docTitle', '文档标题')}: <span style={{ color: 'var(--text-2)' }}>{citePanel.title}</span></span>}
               {citePanel.heading && <span>{t('rag.position', '位置')}: <span style={{ color: 'var(--text-2)' }}>{citePanel.heading}</span></span>}
-              {citePanel.relevance_score != null && <span>{t('rag.relevance', '相关性')}: <span style={{ color: 'var(--brand)' }}>{citePanel.relevance_score.toFixed(3)}</span></span>}
+              {citePanel.relevance_score != null && <span>{t('rag.retrievalRank', '检索排序分（非置信度）')}: <span style={{ color: 'var(--brand)' }}>{citePanel.relevance_score.toFixed(3)}</span></span>}
             </div>
+            {citePanel.occurred_at && <div>{t('rag.sourceEventAt', '来源记录时间')}：{citePanel.occurred_at}</div>}
+            {citePanel.indexed_at != null && <div style={{ fontSize: 12, color: 'var(--text-3)' }}>{t('rag.sourceIndexedAt', '索引更新时间')}：{new Date(citePanel.indexed_at).toLocaleString(undefined, { timeZone: 'Asia/Shanghai' })}</div>}
+            {!!citePanel.source_links?.length && <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>{citePanel.source_links.map((source, index) => referenceUrl(source.url) && <a key={index} href={referenceUrl(source.url)} target="_blank" rel="noopener noreferrer">{source.label} ↗</a>)}</div>}
+            {sourceLoading && <span>{t('common.loading', '加载中…')}</span>}
             <div style={{ fontSize: 12, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: 0.4 }}>{t('rag.excerpt', '原文片段')}</div>
             <div style={{ background: 'var(--panel-2)', border: '1px solid var(--border-soft)', borderRadius: 8, padding: '12px 14px', fontSize: 13.5, lineHeight: 1.75, color: 'var(--text)', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', fontFamily: 'ui-monospace, SFMono-Regular, Consolas, monospace' }}>
               {citePanel.content_preview || <span style={{ color: 'var(--text-3)' }}>{t('rag.noExcerpt', '(无预览内容)')}</span>}

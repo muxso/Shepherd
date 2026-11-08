@@ -1,5 +1,6 @@
 """WeCom long-connection adapter. Credentials and chat contents never enter logs."""
 import asyncio
+import contextlib
 import json
 import os
 import re
@@ -8,8 +9,8 @@ import time
 import uuid
 from pathlib import Path
 from urllib.parse import quote
-from channel import Conversations, chart_request, incoming_text, render_chart, utf8_limit
-from evidence import activity_summary, activity_window, evidence_request, report_evidence
+from channel import Conversations, incoming_text, utf8_limit, citation_footer, render_grounded_chart, absolute_source_links
+
 
 
 class SafeLogger:
@@ -50,18 +51,42 @@ class Gateway:
                 raise RuntimeError("backend_unavailable")
             return await response.json()
 
-    async def activity(self, project, days, role="code"):
-        sources = await self.api("/api/devops/sources")
-        source = next((s for s in sources.get("items", []) if s.get("project_id") == project), None)
-        if source is None:
-            raise ValueError("project_source_missing")
-        return await self.api("/api/devops/sources/"+quote(source["id"], safe="")+f"/team-activity?role={role}&days={days}")
+    async def bind_remote(self, room, code):
+        headers = {"Authorization": "Bearer "+os.environ["SHEPHERD_API_KEY"]}
+        async with self.http.post(os.environ["SHEPHERD_URL"].rstrip("/")+"/rag/channel/bind", json={"chatId": room, "code": code}, headers=headers) as response:
+            return response.status == 200
+
+    async def report_status(self, receipt=None):
+        if os.environ.get("WECOM_REMOTE_POLICY") != "1":
+            return
+        age = None if not getattr(self, "heartbeat_at", None) else time.monotonic()-self.heartbeat_at
+        body = {"authenticated": self.authenticated, "heartbeatAgeSeconds": age,
+                "activeQueries": len(self.locks), "lastMessageAt": int(self.last_message_at*1000) if self.last_message_at else None,
+                "receipt": receipt}
+        headers = {"Authorization": "Bearer "+os.environ["SHEPHERD_API_KEY"]}
+        try:
+            async with self.http.post(os.environ["SHEPHERD_URL"].rstrip("/")+"/rag/channel/runtime", json=body, headers=headers) as response:
+                if response.status != 204:
+                    print("channel_status_unavailable", flush=True)
+        except Exception:
+            print("channel_status_unavailable", flush=True)
+
+    async def remote_project(self, body, room, sender):
+        kind = "direct" if body.get("chattype") == "single" or not room else "group"
+        external = sender if kind == "direct" else room
+        await self.report_status({"kind": kind, "externalId": external, "senderId": sender})
+        policy = await self.api("/rag/channel/runtime")
+        if not policy.get("enabled"):
+            return None
+        return next((p.get("projectId") for p in policy.get("conversations", [])
+                     if p.get("enabled") and p.get("kind") == kind and p.get("externalId") == external), None)
 
     async def ask(self, project, question, history, frame, stream):
         headers = {"Authorization": "Bearer "+os.environ["SHEPHERD_API_KEY"]}
         body = {"projectId": project, "question": question, "history": history, "topK": 8, "rerank": True, "trace": False}
         answer, citations, event, last_update = "", [], "", 0.0
         completed = False
+        charts = []
         async with self.http.post(os.environ["SHEPHERD_URL"].rstrip("/")+"/rag/ask/stream", json=body, headers=headers) as response:
             if response.status != 200:
                 raise RuntimeError("backend_unavailable")
@@ -73,6 +98,8 @@ class Gateway:
                     data = json.loads(line[5:].strip())
                     if event == "error":
                         raise RuntimeError("answer_unavailable")
+                    if event == "chart" and len(charts) < 3:
+                        charts.append(data)
                     if event == "done":
                         completed = True
                     if event == "sources":
@@ -84,9 +111,18 @@ class Gateway:
                             last_update = time.monotonic()
         if not completed:
             raise RuntimeError("incomplete_answer")
-        if citations:
-            answer += "\n\n资料来源：\n"+"\n".join(f"[{i+1}] {str(c.get('title') or '项目资料')[:160]}" for i, c in enumerate(citations[:5]))
-        return answer or "当前没有足够资料回答，请补充问题背景。"
+        answer = absolute_source_links(answer, os.environ.get("SHEPHERD_PUBLIC_URL", ""))
+        footer = citation_footer(citations, os.environ.get("SHEPHERD_PUBLIC_URL", ""))
+        if footer:
+            answer = utf8_limit(answer, max(1000, 18900-len(footer.encode())))+footer
+        images = []
+        for chart in charts:
+            try:
+                images.append(await asyncio.to_thread(render_grounded_chart, chart, os.environ["WECOM_CHART_FONT"]))
+            except Exception as error:
+                print("chart_failed "+type(error).__name__, flush=True)
+                answer += "\n\n图表生成失败，以上文字仍是本次查询结果，可在网页查看图表。"
+        return answer or "当前没有足够资料回答，请补充问题背景。", images or None
 
     async def on_message(self, frame):
         body = frame.get("body") or {}
@@ -111,17 +147,39 @@ class Gateway:
         stream = "shepherd_"+uuid.uuid4().hex
         config = self.config()
         binding = re.fullmatch(r"(?:绑定|bind)\s+(\S+)", question, flags=re.I)
-        if binding:
+        remote = os.environ.get("WECOM_REMOTE_POLICY") == "1"
+        if binding and remote:
+            if not room or body.get("chattype") == "single":
+                success = False
+            else:
+                try:
+                    success = await asyncio.wait_for(self.bind_remote(room, binding.group(1)), timeout=12)
+                except Exception:
+                    success = False
+            await self.client.reply_stream(frame, stream, "绑定成功。本群已按后台配置获授权访问指定项目的机器人共享资料。" if success else "绑定未完成。请管理员在 RAG 后台开启渠道与群绑定，生成指定项目的有效一次性绑定码。", True)
+            return
+        if binding and not remote:
             success = self.state.bind(room, binding.group(1), os.environ.get("WECOM_SETUP_CODE", ""))
             await self.client.reply_stream(frame, stream, "绑定成功。本群已获授权访问项目的机器人共享资料，可直接 @ 我提问或请求统计图。" if success else "绑定码无效或已使用，请联系管理员。", True)
             return
-        if not room or not self.state.allowed(room, config.get("allowedChatIds", [])):
-            await self.client.reply_stream(frame, stream, "此会话尚未授权。请管理员在目标群内 @ 我发送一次性绑定指令；绑定前不会读取或发送项目资料。", True)
+        project = config["projectId"]
+        if remote:
+            try:
+                project = await asyncio.wait_for(self.remote_project(body, room, sender), timeout=12)
+            except Exception:
+                await self.client.reply_stream(frame, stream, "暂时无法核验会话授权，本次不会读取项目资料，请稍后重试。", True)
+                return
+            authorized = bool(project)
+        else:
+            authorized = bool(room) and self.state.allowed(room, config.get("allowedChatIds", []))
+        if not authorized:
+            await self.client.reply_stream(frame, stream, "此会话尚未授权。请管理员在 Shepherd 的 RAG 后台授权本群或私聊用户，并选择可访问的项目；授权前不会读取或发送项目资料。", True)
             return
         if not question:
             print("message_skipped unsupported_content", flush=True)
             await self.client.reply_stream(frame, stream, "当前支持文字提问；图片、文件和语音暂时无法读取，请 @ 我用文字描述问题。", True)
             return
+        room = f"{project}|{room or 'direct:'+sender}" if remote else room
         try:
             await asyncio.wait_for(self.tasks.acquire(), timeout=0.1)
         except asyncio.TimeoutError:
@@ -132,25 +190,9 @@ class Gateway:
             async with lock:
                 await self.client.reply_stream(frame, stream, "正在查询…", False)
                 print("message_acknowledged", flush=True)
-                images = None
-                if evidence_request(question):
-                    start, end, days = activity_window(question)
-                    print("activity_query_started", flush=True)
-                    data = await self.activity(config["projectId"], days)
-                    if any(word in question for word in ("核对", "核实", "真实性", "对应")) and (len(question.splitlines()) > 3 or any(word in question for word in ("日报", "周报", "逐条", "这些", "对应"))):
-                        answer = report_evidence(question, self.state.history(room, sender), data, start, end)
-                    else:
-                        answer = activity_summary(question, data, start, end)
-                else:
-                    chart = chart_request(question)
-                    if chart:
-                        days, role, metric = chart
-                        data = await self.activity(config["projectId"], days, role)
-                        images = [await asyncio.to_thread(render_chart, data, metric, os.environ["WECOM_CHART_FONT"])]
-                        answer = f"{data['from']} 至 {data['through']}（上海时间）\n已采集活动 {len(data.get('events', []))} 条，新增责任缺陷 {len(data.get('bugs', []))} 个。\n统计图按实际来源记录汇总，完整明细可在项目页面查看。"
-                    else:
-                        print("query_started", flush=True)
-                        answer = await self.ask(config["projectId"], question, self.state.history(room, sender), frame, stream)
+                print("query_started", flush=True)
+                result = await self.ask(project, question, self.state.history(room, sender), frame, stream)
+                answer, images = (result, None) if isinstance(result, str) else result
                 if any(item.get("msgtype") != "text" for item in (body.get("mixed") or {}).get("msg_item", [])):
                     answer = "本次仅根据消息中的文字查询，未读取附件。\n\n"+answer
                 await self.client.reply_stream(frame, stream, utf8_limit(answer), True, msg_item=images)
@@ -209,9 +251,26 @@ async def main():
         loop = asyncio.get_running_loop()
         for sig in (signal.SIGINT, signal.SIGTERM):
             loop.add_signal_handler(sig, stop.set)
-        await client.connect()
-        await stop.wait()
-        client.disconnect(); await runner.cleanup()
+        async def report_loop():
+            while not stop.is_set():
+                gateway.heartbeat_at = logger.last_heartbeat_at
+                try:
+                    await asyncio.wait_for(gateway.report_status(), timeout=10)
+                except asyncio.TimeoutError:
+                    print("channel_status_timeout", flush=True)
+                try:
+                    await asyncio.wait_for(stop.wait(), timeout=25)
+                except asyncio.TimeoutError:
+                    pass
+        reporter = asyncio.create_task(report_loop())
+        try:
+            await client.connect()
+            await stop.wait()
+        finally:
+            reporter.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await reporter
+            client.disconnect(); await runner.cleanup()
 
 
 if __name__ == "__main__":

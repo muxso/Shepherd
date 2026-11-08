@@ -25,6 +25,17 @@ The PVC stores bindings, deduplication IDs, and conversation history. It keeps u
 python3 -m unittest discover -s tests -v
 ```
 
-Activity summaries read the configured project's collected Git records directly, with server-calculated Shanghai dates and person filters. Calendar weeks run Monday through Sunday. On Sunday 2026-11-08, this week is November 2–8 and last week is October 26–November 1. Explicit ISO date ranges and the latest N days are supported within the last 365 days. Replies show collection coverage and at most 15 commit links.
+Activity summaries and business queries use the same `/rag/ask/stream` backend as web chat. The backend reads authorized project records and calculates counts, Shanghai dates and person filters. Calendar weeks run Monday through Sunday. On Sunday 2026-11-08, this week is November 2–8 and last week is October 26–November 1. Explicit ISO date ranges and the latest N days are supported within the last 365 days. Replies show collection coverage and at most 15 commit links.
 
 Report checks locate candidate evidence in collected commits and their linked Yunxiao requirements. Similar titles are candidates, not proof of the same work, a production release, test execution, or report truthfulness. Missing candidates do not mean no work occurred. The gateway does not automatically inspect code diffs, release pipelines, or unseen group history for these checks.
+
+
+## Backend authorization
+
+Set `WECOM_REMOTE_POLICY=1` to require backend-managed authorization. In **System parameters → RAG → WeCom conversations**, choose the connector's dedicated account, enable the channel, and associate each group chat ID or direct-message user ID with a project. The account must already belong to that project. Its API key and role still limit available data. Each message checks the current policy; unavailable policy checks fail closed. Local bindings do not override backend policy.
+
+Group binding is disabled by default. An administrator can enable it and generate a project-specific code valid for 1–1440 minutes. Send `绑定 <code>` while mentioning the bot in the target group. Codes are single-use and stored only as SHA-256 hashes. Turning off group binding invalidates unused codes while preserving approved conversations. Disable or remove a conversation to revoke its access.
+
+The administration page shows connection freshness, active queries, the last receipt time, and pending conversations. Status reports contain conversation and sender identifiers, without message contents. Direct messages require explicit user authorization. Histories are separated by project, conversation, and sender.
+
+Set `SHEPHERD_PUBLIC_URL` to the public application origin so relative source links in replies become clickable URLs. Credentials remain in private deployment Secrets. See [grounded Q&A](../../docs/grounded-qa.md) for supported data and maintained onboarding knowledge.

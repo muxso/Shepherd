@@ -8,6 +8,8 @@ rust-version.workspace = true
 
 # Composition root: construct adapters and services, wire routes, and start the server.
 [dependencies]
+chrono = { version = "0.4", default-features = false, features = ["std"] }
+regex = "1"
 environment-plugins = { path = "../../plugins/environment/backend", features = ["vault", "protocols"], optional = true }
 plugin-runtime = { path = "../plugin-runtime", optional = true }
 yunxiao = { package = "shepherd-yunxiao", path = "../../plugins/yunxiao/backend", features = ["pg", "http"], optional = true }

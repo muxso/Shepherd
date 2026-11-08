@@ -71,19 +71,16 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("暂时无法读取", self.client.replies[-1][0])
         self.assertEqual(self.gateway.state.history("group-a", "user-a"), [])
 
-    async def test_activity_summary_uses_collected_records_instead_of_rag(self):
+    async def test_activity_questions_use_the_same_backend_as_document_questions(self):
         self.gateway.state.bind("group-a", "secret", "secret")
         calls = []
-        async def activity(project, days, role="code"):
-            calls.append((project, days, role))
-            return {"events": [{"kind": "commit", "actor": "成员甲", "date": "2026-11-04", "title": "订单修正", "sha": "abc123", "repo": "service-a", "requirements": []}]}
-        self.gateway.activity = activity
-        with patch("gateway.activity_window", return_value=("2026-11-02", "2026-11-08", 7)):
-            await self.gateway.on_message(frame(question="梳理git和云效成员甲本周干啥了"))
-        self.assertEqual(calls, [("project-a", 7, "code")])
-        self.assertIn("2026-11-02 ～ 2026-11-08", self.client.replies[-1][0])
-        self.assertIn("abc123", self.client.replies[-1][0])
-        self.assertTrue(self.client.replies[-1][1])
+        async def ask(project, question, history, received, stream):
+            calls.append((project, question))
+            return "统计回答", [{"msgtype": "image", "image": {"base64": "png", "md5": "digest"}}]
+        self.gateway.ask = ask
+        await self.gateway.on_message(frame(question="每个组本周的代码热力图"))
+        self.assertEqual(calls, [("project-a", "每个组本周的代码热力图")])
+        self.assertEqual(self.client.replies[-1][2]["msg_item"][0]["msgtype"], "image")
 
     async def test_unbound_room_is_rejected_without_backend_or_history(self):
         await self.gateway.on_text(frame())
@@ -112,6 +109,50 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(calls, [("project-a", "解释实现", []), ("project-a", "解释流程", [])])
         self.assertTrue(self.client.replies[-1][1])
         self.assertEqual(self.gateway.locks, {})
+
+    async def test_remote_authorization_is_project_scoped_and_revocation_wins_over_local_binding(self):
+        self.gateway.state.bind("group-a", "secret", "secret")
+        policy = {"enabled": True, "conversations": [{"kind": "group", "externalId": "group-a", "projectId": "project-b", "enabled": True}]}
+        async def api(path):
+            self.assertEqual(path, "/rag/channel/runtime")
+            return policy
+        async def report(receipt=None):
+            self.assertNotIn("question", receipt or {})
+        calls = []
+        async def ask(project, question, history, received, stream):
+            calls.append((project, history))
+            return "Scoped answer"
+        self.gateway.api, self.gateway.report_status, self.gateway.ask = api, report, ask
+        with patch.dict(os.environ, {"WECOM_REMOTE_POLICY": "1"}):
+            await self.gateway.on_text(frame())
+            policy["enabled"] = False
+            await self.gateway.on_text(frame(message="m2"))
+        self.assertEqual(calls, [("project-b", [])])
+        self.assertIn("尚未授权", self.client.replies[-1][0])
+
+    async def test_direct_chat_requires_an_explicit_user_authorization(self):
+        policy = {"enabled": True, "conversations": [{"kind": "direct", "externalId": "user-a", "projectId": "project-a", "enabled": True}]}
+        async def api(path): return policy
+        async def report(receipt=None): pass
+        calls = []
+        async def ask(project, question, history, received, stream):
+            calls.append(project)
+            return "Direct answer"
+        self.gateway.api, self.gateway.report_status, self.gateway.ask = api, report, ask
+        with patch.dict(os.environ, {"WECOM_REMOTE_POLICY": "1"}):
+            await self.gateway.on_text(frame(room=""))
+            await self.gateway.on_text(frame(message="m2", room="", user="user-b"))
+        self.assertEqual(calls, ["project-a"])
+        self.assertIn("尚未授权", self.client.replies[-1][0])
+
+    async def test_remote_binding_never_uses_the_local_setup_code(self):
+        async def bind(room, code):
+            return False
+        self.gateway.bind_remote = bind
+        with patch.dict(os.environ, {"WECOM_REMOTE_POLICY": "1", "WECOM_SETUP_CODE": "secret"}):
+            await self.gateway.on_text(frame(question="绑定 secret"))
+        self.assertIn("后台开启", self.client.replies[-1][0])
+        self.assertFalse(self.gateway.state.allowed("group-a", []))
 
 
 if __name__ == "__main__":
