@@ -95,7 +95,7 @@ function RequirementReview() {
       <Row gutter={12} style={{ marginBottom: 12 }}>
         {card('DRAFT', t('review.s.DRAFT', '待评审'), '#fa8c16')}
         {card('BASELINED', t('review.s.BASELINED', '已基线(评审通过)'), 'var(--success)')}
-        {card('DELIVERED', t('review.s.DELIVERED', '已交付'), '#1677ff')}
+        {card('DELIVERED', t('review.s.DELIVERED', '已交付'), 'var(--brand)')}
         {card('ARCHIVED', t('review.s.ARCHIVED', '已归档'))}
       </Row>
       <Card size="small" title={t('review.queue', '需求评审队列')} extra={<Segmented size="small" value={filter} onChange={(v) => setFilter(v as string)} options={[{ label: t('review.all', '全部'), value: 'ALL' }, { label: t('review.s.DRAFT', '待评审'), value: 'DRAFT' }, { label: t('review.s.BASELINED', '已通过'), value: 'BASELINED' }]} />}>

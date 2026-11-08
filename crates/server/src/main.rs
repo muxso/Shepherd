@@ -38,6 +38,7 @@ mod references_route;
 mod report_archive_job;
 mod routes;
 mod scenario_run;
+mod test_assets_source;
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -767,13 +768,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Arc::new(rag::adapters::OpenAiEmbedder::new(rag_config.clone()));
     let rag_chat: Arc<dyn rag::ports::Chat> =
         Arc::new(rag::adapters::OpenAiChat::new(rag_config.clone()));
-    let rag_routes = rag::http::router(
+    let asset_source = test_assets_source::reader().await?;
+    let test_asset_routes = case_management::adapters::test_assets_http::router(
+        Arc::new(case_management::adapters::test_assets_pg::PgAssetStore(pool.clone())),
+        asset_source.clone(),
+        sessions.clone(),
+    );
+    let rag_routes = rag::http::router_with_changes(
         rag_store,
         rag_embedder,
         rag_chat,
         sessions.clone(),
         rag_config,
         pool.clone(),
+        test_assets_source::changes(asset_source),
     );
 
     let app = routes::assemble(vec![
@@ -817,7 +825,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             case_routes
                 .merge(case_exec_routes)
                 .merge(case_summary_routes)
-                .merge(functional_case_routes),
+                .merge(functional_case_routes)
+                .merge(test_asset_routes),
         ),
         routes::group("bug", bug_routes.merge(follow_routes)),
         routes::group("notice", notice_routes),
@@ -835,7 +844,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .merge(import_scheduler_routes),
         ),
         routes::group("perf", perf_routes),
-        routes::group("rag", rag_routes),
+        routes::group_with_body_limit("rag", rag_routes, 16 * 1024 * 1024),
         routes::group("plugins", plugin_routes),
         routes::group("debug", debug_send_routes),
         routes::group("meta", openapi::routes().merge(health_routes(pool.clone()))),

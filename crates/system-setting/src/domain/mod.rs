@@ -13,3 +13,6 @@ pub use organization::{NewOrganization, OrgError, Organization};
 pub use role::{NewRole, Role, RoleError, RoleScope};
 pub use user::{Email, NewUser, User, UserError};
 pub use user_lookup::UserSource;
+
+mod user_theme;
+pub use user_theme::UserTheme;

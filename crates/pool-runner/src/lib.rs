@@ -182,6 +182,7 @@ mod tests {
         WireNode::Step {
             id: id.into(),
             request: RequestSpec {
+                timeout_ms: None,
                 method: HttpMethod::Get,
                 url: url.into(),
                 headers: vec![],

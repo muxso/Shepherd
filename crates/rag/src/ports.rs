@@ -97,3 +97,8 @@ pub trait Chat: Send + Sync {
         Ok(full)
     }
 }
+
+#[async_trait]
+pub trait ChangeSource: Send + Sync {
+    async fn linked_changes(&self, source: &str, external: &str) -> Result<serde_json::Value>;
+}

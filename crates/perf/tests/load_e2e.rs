@@ -38,6 +38,7 @@ async fn spawn_server() -> String {
 async fn native_load_run_produces_report() {
     let base = spawn_server().await;
     let spec = RequestSpec {
+        timeout_ms: None,
         method: HttpMethod::Get,
         url: format!("{base}/ping"),
         headers: vec![],

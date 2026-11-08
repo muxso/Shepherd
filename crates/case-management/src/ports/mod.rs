@@ -4,3 +4,4 @@ pub use case_repository::{
     CaseBugRef, CaseChange, CaseDependencyRef, CasePlanRef, CaseRepository, CaseRequirement,
     CaseReviewRef, CoverageCase, RepoError,
 };
+pub mod test_assets;

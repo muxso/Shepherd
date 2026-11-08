@@ -1,0 +1,24 @@
+.appearance-settings{max-width:760px;padding-bottom:16px}
+.appearance-settings h3{margin:0 0 8px;font-size:16px;font-weight:600}
+.appearance-description{margin:0 0 24px;color:var(--text-3);font-size:13px}
+.appearance-settings h4{margin:24px 0 12px;font-size:13px;font-weight:600;color:var(--text-2)}
+.appearance-presets{display:grid;grid-template-columns:repeat(auto-fit,minmax(116px,1fr));gap:10px}
+.appearance-presets button{position:relative;border:1px solid var(--border);border-radius:10px;background:var(--panel);padding:18px 10px 14px;color:var(--text);font:inherit;font-size:13px;font-weight:500;cursor:pointer;transition:background .15s,border-color .15s}
+.appearance-presets button:hover{border-color:var(--brand)}
+.appearance-presets button i{display:block;width:28px;height:28px;border-radius:8px;margin:0 auto 10px}
+.appearance-preset-check{position:absolute;right:8px;top:8px;font-size:11px}
+.appearance-preview{margin:28px 0 24px;border:1px solid var(--preview-border);border-radius:12px;overflow:hidden;color:var(--preview-text)}
+.appearance-preview header{display:flex;align-items:center;justify-content:space-between;padding:13px 18px;border-bottom:1px solid var(--preview-border)}
+.appearance-preview header>span{font-weight:600;letter-spacing:.2px;color:var(--preview-accent)}
+.appearance-preview header small{color:var(--preview-muted);font-size:11px}
+.appearance-preview-layout{display:grid;grid-template-columns:136px 1fr;min-height:164px}
+.appearance-preview aside{padding:18px 10px;border-right:1px solid var(--preview-border);font-size:12px;color:var(--preview-muted)}
+.appearance-preview aside span{display:block;padding:9px 12px;border-radius:6px;margin-bottom:4px}
+.appearance-preview aside .appearance-preview-selected{color:var(--preview-accent);background:var(--preview-soft);font-weight:500}
+.appearance-preview-content{padding:24px}
+.appearance-preview-content strong{font-size:14px;font-weight:600}
+.appearance-preview-content p{margin:8px 0 18px;color:var(--preview-muted);font-size:12px;line-height:1.6}
+.appearance-actions{display:flex;align-items:center;gap:14px;padding-top:18px;border-top:1px solid var(--border-soft)}
+.appearance-actions>.ant-btn{height:36px;padding-inline:18px}
+.appearance-actions>span{font-size:12px;color:var(--text-3)}
+@media(max-width:680px){.appearance-preview-layout{grid-template-columns:100px 1fr}.appearance-preview-content{padding:20px 16px}.appearance-presets{grid-template-columns:repeat(3,1fr)}}

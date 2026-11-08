@@ -1,7 +1,8 @@
+//! User appearance preferences belong to the host database.
 //! Legacy Yunxiao migrations are validation-only; new host databases never apply them.
 //! Database migrations: embeds the sqlx migrations under this crate's
 //! migrations/ dir and runs them in order; also provides PgPool connect and
-//! ping. After adding a migration, touch this file and rebuild or it won't be embedded.
+//! ping. The build script tracks the migrations directory for incremental builds.
 
 use sqlx::migrate::MigrateError;
 pub use sqlx::PgPool; // Re-export so the composition root can name PgPool without depending on sqlx directly.

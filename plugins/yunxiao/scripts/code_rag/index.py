@@ -173,7 +173,7 @@ class Indexer:
                     'projectId': self.c['projectId'], 'documentId': doc_id,
                     'title': f"{spec['name']} [{spec['branch']}] / {path} @{sha}",
                     'text': text, 'sourceType': 'code',
-                    'sourceId': json.dumps({'repositoryId': rid, 'branch': spec['branch'], 'path': path, 'commit': sha}),
+                    'sourceId': json.dumps({'repositoryId': rid, 'branch': spec['branch'], 'path': path, 'commit': sha, 'blob': oid.decode()}),
                     'visibilityGroups': self.c.get('visibilityGroups', [])})
                 if not result.get('embedded'):
                     raise RuntimeError('Embedding unavailable; checkpoint not advanced')
@@ -191,12 +191,22 @@ class Indexer:
             state.update(status='complete', commit=sha, completedAt=int(time.time()),
                          indexedFiles=len(state['files']), changed=changed, unchanged=skipped)
             save(state_path, state)
+            if self.c.get('publishCheckpoints'):
+                if __package__: from .publish_checkpoints import publish
+                else: from publish_checkpoints import publish
+                publish(self, spec, state)
+                state['checkpointStatus'] = 'published'
+                save(state_path, state)
             if self.c.get('gitHistoryDays'):
                 if __package__: from .git_activity import collect
                 else: from git_activity import collect
                 activity = collect(repo, spec, self.c, git, eligible, sanitize)
                 activity_root = self.root / 'activities'; activity_root.mkdir(exist_ok=True)
                 save(activity_root / (key + '.json'), {'repository': rid, 'commits': activity, 'updatedAt': int(time.time())})
+                if self.c.get('publishCheckpoints'):
+                    if __package__: from .publish_checkpoints import publish_activity
+                    else: from publish_checkpoints import publish_activity
+                    publish_activity(self, spec, activity)
             print(json.dumps({k: v for k, v in state.items() if k not in ('files', 'identity')}, ensure_ascii=False), flush=True)
 
     def run(self):

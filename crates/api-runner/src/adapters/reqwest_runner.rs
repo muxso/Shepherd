@@ -104,6 +104,12 @@ impl ReqwestRunner {
         let method = reqwest::Method::from_bytes(spec.method.as_str().as_bytes())
             .map_err(|e| RunError::Transport(e.to_string()))?;
         let mut req = self.client.request(method, &spec.url);
+        if let Some(ms) = spec.timeout_ms {
+            if !(1..=900_000).contains(&ms) {
+                return Err(RunError::Transport("timeoutMs must be between 1 and 900000".into()));
+            }
+            req = req.timeout(Duration::from_millis(ms));
+        }
         for (k, v) in &spec.headers {
             req = req.header(k, v);
         }
@@ -214,7 +220,7 @@ mod tests {
     }
 
     fn get_spec(url: String) -> RequestSpec {
-        RequestSpec { method: HttpMethod::Get, url, headers: vec![], body: None }
+        RequestSpec { timeout_ms: None, method: HttpMethod::Get, url, headers: vec![], body: None }
     }
 
     #[tokio::test]
@@ -261,6 +267,37 @@ mod tests {
         assert_eq!(report.outcome, CaseOutcome::Error);
         assert!(report.failures[0].contains("transport"));
         assert!(report.failures[0].contains("connect"), "got: {}", report.failures[0]);
+    }
+
+    #[tokio::test]
+    async fn request_timeout_overrides_client_default_only_for_that_request() {
+        let app = Router::new().route(
+            "/slow",
+            get(|| async {
+                tokio::time::sleep(Duration::from_millis(120)).await;
+                "ok"
+            }),
+        );
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        tokio::spawn(async move { axum::serve(listener, app).await.expect("serve") });
+        let runner = ReqwestRunner::with_client(
+            reqwest::Client::builder()
+                .no_proxy()
+                .timeout(Duration::from_millis(40))
+                .build()
+                .expect("client"),
+        );
+        let mut spec = get_spec(format!("http://{addr}/slow"));
+        spec.timeout_ms = Some(1000);
+        assert_eq!(
+            runner.run_case(&spec, &[Assertion::StatusIs(200)]).await.outcome,
+            CaseOutcome::Success
+        );
+        spec.timeout_ms = None;
+        let report = runner.run_case(&spec, &[Assertion::StatusIs(200)]).await;
+        assert_eq!(report.outcome, CaseOutcome::Error);
+        assert!(report.failures[0].contains("timeout"));
     }
 
     #[tokio::test]

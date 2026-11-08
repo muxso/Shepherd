@@ -1,5 +1,5 @@
 .yx-requirement-toolbar { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 16px; }
-.yx-role-flow { display: grid; grid-template-columns: minmax(0,1fr) 20px minmax(0,1fr) 20px minmax(0,1fr); gap: 12px; align-items: stretch; margin-bottom: 16px; }
+.yx-role-flow { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 12px; align-items: stretch; margin-bottom: 16px; }
 .yx-role-flow > .ant-card { min-width: 0; }
 .yx-role-arrow { align-self: center; color: var(--text-3); }
 .yx-role-flow p { margin-block: 8px; }

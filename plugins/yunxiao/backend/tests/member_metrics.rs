@@ -385,3 +385,27 @@ fn delay_comparisons_also_exclude_completed_late_deliveries() {
         assert!(period.expect("period").members.iter().all(|m| m.delay_rate == Some(0.0)));
     }
 }
+
+#[test]
+fn pending_release_is_neither_overdue_nor_a_delivery() {
+    let records = [
+        req("ready", "待发布", "2026-10-02T00:00:00+08:00", "2026-10-15"),
+        req("late", "开发中", "2026-10-02T00:00:00+08:00", "2026-10-15"),
+    ];
+    let metrics = build_member_metrics(&records, &query(), now()).expect("metrics");
+    for person in metrics.members {
+        assert_eq!(person.due_requirements, 1);
+        assert_eq!(person.overdue_at_end, 1);
+        assert_eq!(person.delivered_requirements, 0);
+        assert_eq!(person.delay_rate, Some(100.0));
+        assert_eq!(
+            person
+                .requirements
+                .iter()
+                .find(|r| r.external_id == "ready")
+                .expect("valid fixture")
+                .delivery_class,
+            "pendingRelease"
+        );
+    }
+}

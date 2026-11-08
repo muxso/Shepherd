@@ -25,6 +25,7 @@ const proxy = Object.fromEntries(
     '/follow',
     '/notice',
     '/functional-case',
+    '/test-assets',
     '/test-plan',
     '/perf',
     '/runner',

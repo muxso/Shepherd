@@ -44,7 +44,7 @@ interface Counts {
 
 // Muted palette shared by all Home charts: reduced alpha so large areas aren't glaring saturated primaries.
 const C = {
-  blue: 'rgba(22, 100, 255, 0.72)',
+  blue: 'rgba(var(--brand-rgb), 0.72)',
   skyblue: 'rgba(22, 119, 255, 0.68)',
   cyan: 'rgba(19, 194, 194, 0.68)',
   green: 'rgba(82, 196, 26, 0.68)',

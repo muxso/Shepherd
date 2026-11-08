@@ -67,6 +67,7 @@ pub fn router(
         .route("/auth/logout", post(logout_handler))
         .route("/auth/refresh", post(refresh_handler))
         .route("/auth/me", get(me_handler))
+        .route("/auth/theme", get(get_theme).put(save_theme))
         .route("/auth/password", post(change_password))
         // The static segment /names must be registered before /{id}, or the wildcard eats it.
         .route("/system/user/names", get(resolve_names))
@@ -168,6 +169,49 @@ struct MeResponse {
 async fn me_handler(user: AuthUser) -> Response {
     let body = MeResponse { permissions: user.permissions.to_raw(), user_id: user.user_id };
     (StatusCode::OK, Json(body)).into_response()
+}
+
+#[derive(Deserialize, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ThemeBody {
+    mode: String,
+    primary_color: String,
+}
+#[derive(Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct ThemeResponse {
+    user_id: String,
+    theme: Option<ThemeBody>,
+}
+#[utoipa::path(get,path="/auth/theme",tag="auth",responses((status=200,body=ThemeResponse),(status=401)),security(("bearer"=[])))]
+async fn get_theme(user: AuthUser, State(st): State<AppState>) -> Response {
+    match st.admin.theme(&user.user_id).await {
+        Ok(theme) => Json(ThemeResponse {
+            user_id: user.user_id,
+            theme: theme.map(|t| ThemeBody { mode: t.mode, primary_color: t.primary_color }),
+        })
+        .into_response(),
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "theme read failed").into_response(),
+    }
+}
+#[utoipa::path(put,path="/auth/theme",tag="auth",request_body=ThemeBody,responses((status=200,body=ThemeResponse),(status=400),(status=401)),security(("bearer"=[])))]
+async fn save_theme(
+    user: AuthUser,
+    State(st): State<AppState>,
+    Json(body): Json<ThemeBody>,
+) -> Response {
+    match st.admin.save_theme(&user.user_id, &body.mode, &body.primary_color).await {
+        Ok(t) => Json(ThemeResponse {
+            user_id: user.user_id,
+            theme: Some(ThemeBody { mode: t.mode, primary_color: t.primary_color }),
+        })
+        .into_response(),
+        Err(UserCmdError::Validation(_)) => {
+            (StatusCode::BAD_REQUEST, "theme requires light or dark mode and a six-digit hex color")
+                .into_response()
+        }
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "theme save failed").into_response(),
+    }
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -1133,13 +1177,13 @@ async fn revoke_role(
 #[derive(OpenApi)]
 #[openapi(
     paths(
-        login_handler, logout_handler, refresh_handler, me_handler, change_password,
+        login_handler, logout_handler, refresh_handler, me_handler, get_theme, save_theme, change_password,
         resolve_names, oidc_authorize, oidc_callback,
         create_user, list_users, get_user, update_user, delete_user,
         create_org, list_orgs, get_org, update_org, delete_org,
         create_role, list_roles, get_role, update_role, delete_role, grant_role, revoke_role
     ),
-    components(schemas(LoginRequest, LoginResponse, MeResponse, ChangePasswordBody, CreateUserRequest, UserResponse, UserPage, UpdateUserBody, OrgResponse, OrgBody, OrgPage, RoleResponse, RoleBody, RolePage, GrantBody)),
+    components(schemas(LoginRequest, LoginResponse, MeResponse, ThemeBody, ThemeResponse, ChangePasswordBody, CreateUserRequest, UserResponse, UserPage, UpdateUserBody, OrgResponse, OrgBody, OrgPage, RoleResponse, RoleBody, RolePage, GrantBody)),
     tags((name = "auth", description = "Authentication"), (name = "user", description = "User management"), (name = "organization", description = "Organization"), (name = "role", description = "Role / authorization"))
 )]
 struct ApiDoc;
@@ -1248,6 +1292,74 @@ mod tests {
 
     fn create_body() -> &'static str {
         r#"{"name":"Alice","email":"a@x.com"}"#
+    }
+
+    #[tokio::test]
+    async fn theme_preferences_are_self_service_and_isolated_by_session_user() {
+        let (app, sessions) = app_store();
+        let alice = sessions
+            .create(
+                "theme-alice",
+                PermissionSet::from_raw(std::iter::empty::<String>()).expect("valid fixture"),
+                3600,
+            )
+            .await
+            .expect("valid fixture");
+        let bob = sessions
+            .create(
+                "theme-bob",
+                PermissionSet::from_raw(std::iter::empty::<String>()).expect("valid fixture"),
+                3600,
+            )
+            .await
+            .expect("valid fixture");
+        let request = |method: &str, body: &str, token: Option<&str>| {
+            let mut r = Request::builder()
+                .method(method)
+                .uri("/auth/theme")
+                .header("content-type", "application/json");
+            if let Some(t) = token {
+                r = r.header("authorization", format!("Bearer {t}"));
+            }
+            r.body(Body::from(body.to_owned())).expect("valid fixture")
+        };
+        let response = app
+            .clone()
+            .oneshot(request("PUT", r##"{"mode":"light","primaryColor":"#4d9f92"}"##, Some(&alice)))
+            .await
+            .expect("valid fixture");
+        assert_eq!(response.status(), StatusCode::OK);
+        let response =
+            app.clone().oneshot(request("GET", "", Some(&alice))).await.expect("valid fixture");
+        let body = axum::body::to_bytes(response.into_body(), 10000).await.expect("valid fixture");
+        let value: serde_json::Value = serde_json::from_slice(&body).expect("valid fixture");
+        assert_eq!(value["userId"], "theme-alice");
+        assert_eq!(value["theme"]["primaryColor"], "#4D9F92");
+        let response =
+            app.clone().oneshot(request("GET", "", Some(&bob))).await.expect("valid fixture");
+        let body = axum::body::to_bytes(response.into_body(), 10000).await.expect("valid fixture");
+        let value: serde_json::Value = serde_json::from_slice(&body).expect("valid fixture");
+        assert!(value["theme"].is_null());
+        for (body, status) in [
+            (r##"{"mode":"light","primaryColor":"red"}"##, StatusCode::BAD_REQUEST),
+            (
+                r##"{"mode":"light","primaryColor":"#123456","userId":"theme-bob"}"##,
+                StatusCode::UNPROCESSABLE_ENTITY,
+            ),
+        ] {
+            assert_eq!(
+                app.clone()
+                    .oneshot(request("PUT", body, Some(&alice)))
+                    .await
+                    .expect("valid fixture")
+                    .status(),
+                status
+            );
+        }
+        assert_eq!(
+            app.oneshot(request("GET", "", None)).await.expect("valid fixture").status(),
+            StatusCode::UNAUTHORIZED
+        );
     }
 
     #[tokio::test]

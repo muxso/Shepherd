@@ -34,10 +34,12 @@ impl CreateApiCaseUseCase {
         body: Option<String>,
         assertions: serde_json::Value,
         processors: serde_json::Value,
+        timeout_ms: Option<u64>,
     ) -> Result<ApiCase, CreateApiCaseError> {
         let def_id = api_definition_id.unwrap_or_default();
         let new_case = NewApiCase::new(def_id, project_id, name, method, url, body, assertions)?
-            .with_processors(processors);
+            .with_processors(processors)
+            .with_timeout_ms(timeout_ms)?;
         Ok(self.repo.insert_case(&new_case).await?)
     }
 }
@@ -61,6 +63,7 @@ mod tests {
                 None,
                 serde_json::json!([]),
                 serde_json::json!([]),
+                None,
             )
             .await
             .expect("ok");
@@ -83,6 +86,7 @@ mod tests {
                 None,
                 serde_json::json!([]),
                 serde_json::json!([]),
+                None,
             )
             .await
             .expect("ok");
@@ -103,6 +107,7 @@ mod tests {
                 None,
                 serde_json::json!({}),
                 serde_json::json!([]),
+                None,
             )
             .await
             .unwrap_err();

@@ -186,6 +186,7 @@ struct DefinitionListQuery {
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct ApiCaseResponse {
+    timeout_ms: Option<u64>,
     id: String,
     api_definition_id: String,
     project_id: String,
@@ -207,6 +208,7 @@ struct ApiCaseResponse {
 impl From<ApiCase> for ApiCaseResponse {
     fn from(c: ApiCase) -> Self {
         Self {
+            timeout_ms: c.timeout_ms,
             id: c.id,
             api_definition_id: c.api_definition_id,
             project_id: c.project_id,
@@ -230,6 +232,8 @@ impl From<ApiCase> for ApiCaseResponse {
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct ApiCaseCreateBody {
+    #[serde(default)]
+    timeout_ms: Option<u64>,
     name: String,
     method: String,
     url: String,
@@ -581,6 +585,7 @@ async fn create_case(
     let assertions = req.assertions.unwrap_or_else(|| serde_json::json!([]));
     let processors = req.processors.unwrap_or_else(|| serde_json::json!([]));
     let meta = ApiCaseMeta {
+        timeout_ms: req.timeout_ms,
         priority: req.priority.unwrap_or_default(),
         status: req.status.unwrap_or_default(),
         tags: req.tags.unwrap_or_else(|| serde_json::json!([])),
@@ -628,6 +633,8 @@ async fn list_cases(
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct StandaloneCaseBody {
+    #[serde(default)]
+    timeout_ms: Option<u64>,
     project_id: String,
     #[serde(default)]
     api_definition_id: Option<String>,
@@ -691,6 +698,7 @@ async fn create_standalone_case(
             req.body,
             assertions,
             processors,
+            req.timeout_ms,
         )
         .await
     {
@@ -877,6 +885,10 @@ async fn update_case(
                 ),
             Err(_) => return (StatusCode::BAD_REQUEST, "invalid api case payload").into_response(),
         };
+    let new_case = match new_case.with_timeout_ms(req.timeout_ms) {
+        Ok(c) => c,
+        Err(_) => return (StatusCode::BAD_REQUEST, "invalid timeoutMs").into_response(),
+    };
     match st.repo.update_case(&id, &new_case).await {
         Ok(true) => StatusCode::NO_CONTENT.into_response(),
         Ok(false) => (StatusCode::NOT_FOUND, "api case not found").into_response(),
@@ -1737,6 +1749,43 @@ mod tests {
             .await
             .expect("resp");
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn case_timeout_round_trips_and_rejects_out_of_range_values() {
+        let (app, token) = app().await;
+        let did = create_definition_returns_id(&app, &token).await;
+        let path = format!("/api/definition/{did}/case");
+        for ms in [0u64, 900_001] {
+            let body =
+                serde_json::json!({"name":"slow","method":"POST","url":"/ocr","timeoutMs":ms});
+            let response = app
+                .clone()
+                .oneshot(post(&path, &body.to_string(), Some(&token)))
+                .await
+                .expect("response");
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        }
+        let mut body =
+            serde_json::json!({"name":"slow","method":"POST","url":"/ocr","timeoutMs":260000});
+        let response = app
+            .clone()
+            .oneshot(post(&path, &body.to_string(), Some(&token)))
+            .await
+            .expect("create");
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let created = json_body(response).await;
+        assert_eq!(created["timeoutMs"], 260000);
+        body["timeoutMs"] = serde_json::json!(120000);
+        let case_path = format!("/api/case/{}", created["id"].as_str().expect("id"));
+        let response = app
+            .clone()
+            .oneshot(put(&case_path, &body.to_string(), Some(&token)))
+            .await
+            .expect("update");
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+        let response = app.clone().oneshot(get(&path, Some(&token))).await.expect("list");
+        assert_eq!(json_body(response).await[0]["timeoutMs"], 120000);
     }
 
     #[tokio::test]

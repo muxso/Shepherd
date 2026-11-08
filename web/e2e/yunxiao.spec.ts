@@ -15,7 +15,7 @@ test.beforeEach(async ({ page }) => {
 test('statistics scrolling reaches all six data tabs in a 720px viewport', async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 1280, height: 720 })
   await page.goto('/devops')
-  await expect(page.getByRole('heading', { name: '云效研发统计' })).toBeVisible()
+  await expect(page.getByRole('tab', { name: '概览', exact: true })).toBeVisible()
   const scroll = page.getByTestId('devops-scroll')
   await expect.poll(() => scroll.evaluate(e => ({ overflow: getComputedStyle(e).overflowY, fits: e.clientHeight < window.innerHeight }))).toEqual({ overflow: 'auto', fits: true })
   await scroll.hover()

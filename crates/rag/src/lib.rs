@@ -22,3 +22,7 @@ pub mod tantivy_kw;
 mod qdrant;
 
 pub mod activity;
+
+pub mod code_inventory;
+
+pub mod impact_review;

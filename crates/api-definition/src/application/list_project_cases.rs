@@ -55,6 +55,7 @@ mod tests {
                     None,
                     serde_json::json!([]),
                     serde_json::json!([]),
+                    None,
                 )
                 .await
                 .expect("ok");
@@ -69,6 +70,7 @@ mod tests {
                 None,
                 serde_json::json!([]),
                 serde_json::json!([]),
+                None,
             )
             .await
             .expect("ok");
