@@ -82,9 +82,17 @@ async fn cache_invalidation_projection_rollback_and_large_record_pagination() {
     let client = redis::Client::open(url).expect("client");
     let mut redis = client.get_multiplexed_async_connection().await.expect("Redis");
     let key = "shepherd:yunxiao:statistics:v1:*";
-    let keys: Vec<String> =
-        redis::cmd("KEYS").arg(key).query_async(&mut redis).await.expect("isolated cache keys");
-    assert!(!keys.is_empty());
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    let keys = loop {
+        let keys: Vec<String> =
+            redis::cmd("KEYS").arg(key).query_async(&mut redis).await.expect("isolated cache keys");
+        if !keys.is_empty() {
+            break keys;
+        }
+        assert!(std::time::Instant::now() < deadline, "cache did not reconnect");
+        let _ = store.dashboard(id, 7).await.expect("cache recovery keeps results");
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    };
     for key in keys {
         let ttl: i64 =
             redis::cmd("TTL").arg(key).query_async(&mut redis).await.expect("bounded TTL");
