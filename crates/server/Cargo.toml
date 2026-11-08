@@ -54,7 +54,7 @@ tokio-stream = { version = "0.1", features = ["time", "sync"] }
 tokio-cron-scheduler = "0.13"
 base64 = "0.22"
 tower = { workspace = true }
-tower-http = { version = "0.6", features = ["trace", "timeout", "limit", "cors"] }
+tower-http = { version = "0.6", features = ["trace", "timeout", "limit", "cors", "compression-gzip"] }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 uuid = { workspace = true }

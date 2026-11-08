@@ -200,10 +200,12 @@ jobs:
         env:
           PGPASSWORD: mspass
           SHEPHERD_YUNXIAO_TEST_DATABASE_URL: postgres://msuser:mspass@localhost:5432/yunxiao_plugin_test
+          SHEPHERD_STATISTICS_TEST_REDIS_URL: redis://localhost:6379/14
         run: |
           trap 'dropdb -h localhost -U msuser --if-exists --force yunxiao_plugin_test' EXIT
           createdb -h localhost -U msuser yunxiao_plugin_test
           cargo test -p shepherd-yunxiao --all-features --test pg_sync --locked -- --ignored --test-threads=1
+          cargo test -p shepherd-yunxiao --all-features --test statistics_cache --locked -- --ignored --test-threads=1
       - name: project requirement coverage summary (isolated database)
         env:
           PGPASSWORD: mspass

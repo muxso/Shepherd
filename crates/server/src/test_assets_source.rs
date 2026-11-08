@@ -10,7 +10,9 @@ pub async fn reader() -> Result<Option<Arc<dyn AssetSource>>, Box<dyn std::error
     if crate::plugins::yunxiao_enabled() {
         let url = std::env::var("SHEPHERD_YUNXIAO_DATABASE_URL")?;
         let pool = sqlx::postgres::PgPoolOptions::new().max_connections(2).connect(&url).await?;
-        return Ok(Some(Arc::new(YunxiaoSource(Arc::new(yunxiao::adapters::pg::PgStore(pool))))));
+        return Ok(Some(Arc::new(YunxiaoSource(Arc::new(yunxiao::adapters::pg::PgStore::new(
+            pool,
+        ))))));
     }
     Ok(None)
 }

@@ -17,10 +17,13 @@ axum = { workspace = true, optional = true }
 utoipa = { workspace = true, optional = true }
 webauth = { workspace = true, optional = true, features = ["http"] }
 uuid = { workspace = true, optional = true }
+redis = { workspace = true, features = ["tokio-comp"], optional = true }
+sha2 = { version = "0.10", optional = true }
+tokio = { workspace = true, features = ["sync", "time", "rt"], optional = true }
 tracing = { workspace = true, optional = true }
 
 [features]
-pg = ["dep:sqlx", "dep:uuid", "dep:tracing"]
+pg = ["dep:sqlx", "dep:uuid", "dep:tracing", "dep:redis", "dep:sha2", "dep:tokio"]
 http = ["dep:axum", "dep:utoipa", "dep:webauth"]
 
 [dev-dependencies]

@@ -30,7 +30,7 @@ async fn atomic_snapshot_idempotency_history_and_failures() {
     .expect("connect");
     shepherd_yunxiao::adapters::pg::migrate(&pool).await.expect("migrate");
     let project = uuid::Uuid::new_v4().to_string();
-    let store = PgStore(pool.clone());
+    let store = PgStore::new(pool.clone());
     let source = store
         .create_source(NewSource {
             project_id: project.clone(),
@@ -85,7 +85,7 @@ async fn snapshot_stays_in_plugin_database_without_native_tables() {
     .await
     .expect("connect");
     shepherd_yunxiao::adapters::pg::migrate(&pool).await.expect("plugin migrations");
-    let store = PgStore(pool.clone());
+    let store = PgStore::new(pool.clone());
     let source = store
         .create_source(NewSource {
             project_id: "opaque-reference-without-native-project".into(),
@@ -124,7 +124,7 @@ async fn productivity_uses_source_dates_creators_and_isolated_project_facts() {
     .await
     .expect("connect");
     shepherd_yunxiao::adapters::pg::migrate(&pool).await.expect("migrate");
-    let store = PgStore(pool.clone());
+    let store = PgStore::new(pool.clone());
     let source = store
         .create_source(NewSource {
             project_id: "output-test".into(),
@@ -353,7 +353,7 @@ async fn monthly_member_metrics_use_one_source_and_projected_snapshot() {
     .await
     .expect("connect");
     shepherd_yunxiao::adapters::pg::migrate(&pool).await.expect("migrate");
-    let store = PgStore(pool);
+    let store = PgStore::new(pool);
     let mut sources = Vec::new();
     for n in 0..2 {
         let source = store
@@ -423,7 +423,7 @@ async fn code_authors_use_exact_month_source_and_requirement_visibility() {
     .await
     .expect("connect");
     shepherd_yunxiao::adapters::pg::migrate(&pool).await.expect("migrate");
-    let store = PgStore(pool.clone());
+    let store = PgStore::new(pool.clone());
     let source = store
         .create_source(NewSource {
             project_id: "code-test".into(),
@@ -482,7 +482,7 @@ async fn configurable_identities_apply_before_every_code_query_and_survive_sync(
     .await
     .expect("connect");
     shepherd_yunxiao::adapters::pg::migrate(&pool).await.expect("migrate");
-    let store = PgStore(pool.clone());
+    let store = PgStore::new(pool.clone());
     let mut ids = Vec::new();
     for _ in 0..2 {
         let s = store
@@ -747,7 +747,7 @@ async fn defect_filters_and_pending_release_risk_use_the_same_source_facts() {
     .await
     .expect("valid fixture");
     shepherd_yunxiao::adapters::pg::migrate(&pool).await.expect("valid fixture");
-    let store = PgStore(pool.clone());
+    let store = PgStore::new(pool.clone());
     let source = store
         .create_source(NewSource {
             project_id: "defects".into(),

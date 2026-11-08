@@ -1,8 +1,8 @@
 WITH bugs AS MATERIALIZED (
- SELECT external_id,payload FROM ms_devops_entity WHERE source_id=$1 AND kind='bug' AND active
+ SELECT external_id,payload FROM ms_devops_statistics_entity WHERE source_id=$1 AND kind='bug' AND active
 ), requirements AS (
- SELECT external_id AS reference FROM ms_devops_entity WHERE source_id=$1 AND kind='requirement' AND active
- UNION SELECT payload->>'serial' FROM ms_devops_entity WHERE source_id=$1 AND kind='requirement' AND active
+ SELECT external_id AS reference FROM ms_devops_statistics_entity WHERE source_id=$1 AND kind='requirement' AND active
+ UNION SELECT payload->>'serial' FROM ms_devops_statistics_entity WHERE source_id=$1 AND kind='requirement' AND active
 ), refs AS (
  SELECT external_id,jsonb_array_elements_text(COALESCE(payload->'requirementIds','[]')||to_jsonb(array_remove(ARRAY[NULLIF(payload->>'parentId',''),NULLIF(payload->>'parentSerial','')],NULL))) AS reference FROM bugs
 ), linked AS (

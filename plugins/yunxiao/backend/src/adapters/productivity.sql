@@ -6,7 +6,7 @@ WITH bounds AS (
     COALESCE(NULLIF(payload->>'creator',''), NULLIF(payload#>>'{raw,creator,name}',''),
       NULLIF(payload#>>'{raw,creator,displayName}',''), '待归属') AS creator,
     NULLIF(payload->>'createdAt','')::timestamptz AS created_at
-  FROM ms_devops_resolved_entity WHERE source_id=$1 AND active
+  FROM ms_devops_statistics_resolved WHERE source_id=$1 AND active
 ), events AS (
   SELECT CASE kind WHEN 'requirement' THEN 'requirements' WHEN 'bug' THEN 'bugs' ELSE 'testcases' END AS metric,
     creator AS actor, created_at AS happened_at, 1::bigint AS amount
