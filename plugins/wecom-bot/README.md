@@ -4,6 +4,8 @@ This optional service connects a WeCom intelligent bot to Shepherd over the offi
 
 The gateway answers authorized group messages through `/rag/ask/stream`. It can attach a PNG chart for supported team statistics requests, such as “最近 7 天代码提交统计图”. Images are statistics charts; incoming images and arbitrary image generation are not supported. Relative chart windows support today or the latest 1–365 days. Conversation history is retained locally per group and sender; it is separate from browser chat history.
 
+Charts use the [native media upload protocol](https://github.com/WecomTeam/aibot-node-sdk#uploadmedia-详细说明): upload the PNG, then send an image message with its `media_id` to the authorized conversation that requested it. The text reply contains a short caption. Stream `msg_item` attachments are not used; an accepted stream acknowledgement does not confirm image delivery. Failed uploads or image sends produce an explicit error.
+
 ## Configuration
 
 1. Create an intelligent bot in WeCom and choose **API → Long connection**. Obtain its Bot ID and Secret.
