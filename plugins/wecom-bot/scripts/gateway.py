@@ -9,7 +9,7 @@ import time
 import uuid
 from pathlib import Path
 from urllib.parse import quote
-from channel import Conversations, incoming_text, utf8_limit, citation_footer, render_grounded_chart, absolute_source_links
+from channel import Conversations, incoming_text, utf8_limit, citation_footer, render_grounded_chart, absolute_source_links, image_reply_caption
 
 
 
@@ -21,7 +21,9 @@ class SafeLogger:
         if message == "Received heartbeat ack":
             self.last_heartbeat_at = time.monotonic()
     def info(self, *args): pass
-    def warn(self, *args): print("sdk_warning", flush=True)
+    def warn(self, *args):
+        match = re.search(r"Reply ack error:.*errcode=(-?\d+)", str(args[0]) if args else "")
+        print("reply_ack_error code="+match.group(1) if match else "sdk_warning", flush=True)
     def error(self, *args): print("sdk_error", flush=True)
 
 
@@ -108,7 +110,7 @@ class Gateway:
                         citations = data.get("sources", [])
                     if event == "chunk":
                         answer += data.get("delta", "")
-                        if time.monotonic()-last_update >= 1:
+                        if not charts and time.monotonic()-last_update >= 1:
                             await self.client.reply_stream(frame, stream, utf8_limit(answer), False)
                             last_update = time.monotonic()
         if not completed:
@@ -125,6 +127,15 @@ class Gateway:
                 print("chart_failed "+type(error).__name__, flush=True)
                 answer += "\n\n图表生成失败，以上文字仍是本次查询结果，可在网页查看图表。"
         return answer or "当前没有足够资料回答，请补充问题背景。", images or None
+
+    async def send_final(self, frame, stream, answer, images):
+        count = len(images or [])
+        content = image_reply_caption(answer, count) if count else utf8_limit(answer)
+        ack = await self.client.reply_stream(frame, stream, content, True, msg_item=images)
+        code = ack.get("errcode") if isinstance(ack, dict) else None
+        print(f"reply_delivery images={count} text_bytes={len(content.encode())} errcode={code if isinstance(code, int) else 'missing'}", flush=True)
+        if code != 0:
+            raise RuntimeError("reply_delivery_not_confirmed")
 
     async def on_message(self, frame):
         body = frame.get("body") or {}
@@ -208,7 +219,7 @@ class Gateway:
                 answer, images = (result, None) if isinstance(result, str) else result
                 if any(item.get("msgtype") != "text" for item in (body.get("mixed") or {}).get("msg_item", [])):
                     answer = "本次仅根据消息中的文字查询，未读取附件。\n\n"+answer
-                await self.client.reply_stream(frame, stream, utf8_limit(answer), True, msg_item=images)
+                await self.send_final(frame, stream, answer, images)
                 self.state.append(room, sender, question, answer)
                 print("message_completed", flush=True)
         except ValueError:

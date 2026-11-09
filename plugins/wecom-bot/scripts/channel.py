@@ -51,6 +51,42 @@ def absolute_source_links(text, public_url):
     return re.sub(r"\]\((/[^/\s)<>][^\s)<>]*)\)", lambda m: "]("+urljoin(public_url, m.group(1))+")", text)
 
 
+def image_reply_caption(answer, image_count):
+    """Keep chart replies short while the full answer remains in conversation history."""
+    from datetime import datetime, timezone, timedelta
+    dates = re.findall(r"\d{4}-\d{2}-\d{2}", answer[:300])
+    lines = [f"{dates[0]} ～ {dates[1]}（上海）"] if len(dates) >= 2 else []
+    people = re.search(r"人员：([^。\n]+)", answer)
+    metric = next((line for line in answer.splitlines() if "查询范围覆盖" in line), "")
+    if metric:
+        metric = metric.split("，查询范围覆盖", 1)[0].replace("**", "")
+        person = people.group(1).replace("项目全部已采集成员", "全员") if people else ""
+        lines.append((person+" · " if person else "")+metric)
+    else:
+        roles = [line.split("同步截至：", 1)[0].strip() for line in answer.splitlines() if any(line.startswith("**"+role+"**") for role in ("研发", "产品", "测试"))]
+        if roles:
+            lines.extend(roles)
+        else:
+            first = next((part.strip() for part in answer.split("\n\n") if part.strip()), "统计结果")
+            if not lines or first not in lines:
+                lines.append(utf8_limit(first, 250))
+    observed = re.search(r"同步截至：\s*([0-9T:+.Z-]+)", answer)
+    if observed:
+        try:
+            at = datetime.fromisoformat(observed.group(1).rstrip('.').replace('Z', '+00:00'))
+            lines.append("同步："+at.astimezone(timezone(timedelta(hours=8))).strftime("%m-%d %H:%M")+"（上海）")
+        except ValueError:
+            pass
+    lines.append(f"下附 {image_count} 张统计图。仅统计已采集记录。")
+    if "图表生成失败" in answer:
+        lines.append("部分图片生成失败，请查看来源页。")
+    footer = answer.rsplit("资料来源：", 1)[-1] if "资料来源：" in answer else ""
+    link = re.search(r"\[[^\]]+\]\((https?://[^\s)<>]+)\)", footer)
+    if link:
+        lines.append("[查看统计来源]("+link.group(1)+")")
+    return utf8_limit("\n".join(lines), 1200)
+
+
 def utf8_limit(value, limit=19000):
     raw = str(value).encode()
     return raw[:limit].decode(errors="ignore") + ("…" if len(raw) > limit else "")
