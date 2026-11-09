@@ -1,4 +1,6 @@
 import asyncio
+import base64
+import hashlib
 import json
 import os
 import sys
@@ -9,15 +11,32 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from gateway import Gateway
+from media import ImageDeliveryError, upload_image
 
 
 class Client:
     def __init__(self):
         self.replies = []
+        self.images = []
+        self.commands = []
 
     async def reply_stream(self, frame, stream, text, finished, **kwargs):
         self.replies.append((text, finished, kwargs))
         return {"errcode": 0}
+
+    async def reply(self, frame, body, cmd):
+        self.commands.append((frame, body, cmd))
+        data = {"upload_id": "upload-a"} if cmd.endswith("init") else {"media_id": "media-a", "type": "image"} if cmd.endswith("finish") else {}
+        return {"errcode": 0, "body": data}
+
+    async def send_message(self, target, body):
+        self.images.append((target, body))
+        return {"errcode": 0}
+
+
+def chart_image():
+    raw = b"chart image"
+    return {"msgtype": "image", "image": {"base64": base64.b64encode(raw).decode(), "md5": hashlib.md5(raw).hexdigest()}}
 
 
 class UnavailableBackend:
@@ -50,7 +69,7 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
     async def test_chart_reply_is_short_keeps_images_and_preserves_full_history(self):
         self.gateway.state.bind("group-a", "secret", "secret")
         full = "**范围：2026-11-03 ～ 2026-11-09（上海时间，含首尾）**\n\n人员：全员。同步截至：2026-11-09T05:00:00+00:00。\n\n已采集代码提交 **376**，查询范围覆盖 34 名成员。\n\n"+"Very long details "*350+"\n\n资料来源：\n[1] [统计来源](https://example.com/activity)"
-        images = [{"msgtype": "image", "image": {"base64": "png", "md5": "digest"}}]
+        images = [chart_image()]
         async def ask(*args): return full, images
         self.gateway.ask = ask
         await self.gateway.on_text(frame(question="最近7天代码提交热力图"))
@@ -59,41 +78,86 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("376", text)
         self.assertIn("13:00", text)
         self.assertIn("下附 1 张统计图", text)
-        self.assertEqual(body["msg_item"], images)
+        self.assertNotIn("msg_item", body)
+        self.assertEqual(self.client.images, [("group-a", {"msgtype": "image", "image": {"media_id": "media-a"}})])
         self.assertTrue(finished)
         self.assertEqual(self.gateway.state.history("group-a", "user-a")[-1][1], full)
 
     async def test_failed_final_ack_is_not_recorded_as_a_completed_answer(self):
         self.gateway.state.bind("group-a", "secret", "secret")
-        original = self.client.reply_stream
-        async def reply(frame, stream, text, finished, **kwargs):
-            await original(frame, stream, text, finished, **kwargs)
-            return {"errcode": 40008} if kwargs.get("msg_item") else {"errcode": 0}
-        self.client.reply_stream = reply
-        async def ask(*args): return "统计回答", [{"msgtype": "image", "image": {"base64": "png", "md5": "digest"}}]
+        async def send(target, body): return {"errcode": 40008}
+        self.client.send_message = send
+        async def ask(*args): return "统计回答", [chart_image()]
         self.gateway.ask = ask
         await self.gateway.on_text(frame())
         self.assertEqual(self.gateway.state.history("group-a", "user-a"), [])
-        self.assertIn("未能完成", self.client.replies[-1][0])
+        self.assertIn("未全部发送成功", self.client.replies[-1][0])
 
-    async def test_sdk_serializes_images_inside_the_final_stream(self):
+    async def test_sdk_sends_native_image_after_media_upload(self):
         try:
             from aibot import WSClient
         except ImportError:
             self.skipTest("runtime SDK is not installed")
         class Transport:
+            def __init__(self): self.calls = []
             async def send_reply(self, req_id, body, cmd):
-                self.body = body
-                return {"errcode": 0}
+                self.calls.append((req_id, body, cmd))
+                data = {"upload_id": "upload-a"} if cmd.endswith("init") else {"media_id": "media-a", "type": "image"} if cmd.endswith("finish") else {}
+                return {"errcode": 0, "body": data}
         transport = Transport()
         client = object.__new__(WSClient)
         client._ws_manager = transport
         self.gateway.client = client
-        images = [{"msgtype": "image", "image": {"base64": "png", "md5": "digest"}}]
-        await self.gateway.send_final(frame(), "stream", "统计回答", images)
-        self.assertEqual(transport.body["msgtype"], "stream")
-        self.assertTrue(transport.body["stream"]["finish"])
-        self.assertEqual(transport.body["stream"]["msg_item"], images)
+        await self.gateway.send_final(frame(), "stream", "统计回答", [chart_image()])
+        self.assertEqual([call[2] for call in transport.calls], ["aibot_upload_media_init", "aibot_upload_media_chunk", "aibot_upload_media_finish", "aibot_respond_msg", "aibot_send_msg"])
+        self.assertEqual(transport.calls[-1][1], {"chatid": "group-a", "msgtype": "image", "image": {"media_id": "media-a"}})
+        self.assertNotIn("msg_item", transport.calls[-2][1]["stream"])
+
+    async def test_private_chart_is_sent_to_the_sender(self):
+        message = frame()
+        message["body"]["chattype"] = "single"
+        await self.gateway.send_final(message, "stream", "统计回答", [chart_image()])
+        self.assertEqual(self.client.images[0][0], "user-a")
+
+    async def test_failed_upload_does_not_claim_an_attached_chart(self):
+        self.gateway.state.bind("group-a", "secret", "secret")
+        async def reply(*args): return {"errcode": 0, "body": {}}
+        self.client.reply = reply
+        async def ask(*args): return "统计回答", [chart_image()]
+        self.gateway.ask = ask
+        await self.gateway.on_text(frame())
+        self.assertEqual(self.client.images, [])
+        self.assertNotIn("下附", self.client.replies[-1][0])
+        self.assertIn("未全部发送成功", self.client.replies[-1][0])
+        self.assertEqual(self.gateway.state.history("group-a", "user-a"), [])
+
+    async def test_media_upload_splits_and_retries_chunks(self):
+        raw = b"x"*(512*1024+7)
+        image = {"image": {"base64": base64.b64encode(raw).decode(), "md5": hashlib.md5(raw).hexdigest()}}
+        original = self.client.reply
+        rejected = False
+        async def reply(frame, body, cmd):
+            nonlocal rejected
+            ack = await original(frame, body, cmd)
+            if cmd.endswith("chunk") and not rejected:
+                rejected = True
+                return {"errcode": -1}
+            return ack
+        self.client.reply = reply
+        with patch("media.asyncio.sleep", return_value=None):
+            self.assertEqual(await upload_image(self.client, image, 1), "media-a")
+        chunks = [call[1] for call in self.client.commands if call[2].endswith("chunk")]
+        self.assertEqual([part["chunk_index"] for part in chunks], [0, 0, 1])
+        self.assertEqual(b"".join(base64.b64decode(part["base64_data"]) for part in chunks[1:]), raw)
+        ids = [call[0]["headers"]["req_id"] for call in self.client.commands]
+        self.assertEqual(len(ids), len(set(ids)))
+
+    async def test_invalid_image_is_rejected_before_upload(self):
+        image = chart_image()
+        image["image"]["md5"] = "incorrect"
+        with self.assertRaises(ImageDeliveryError):
+            await upload_image(self.client, image, 1)
+        self.assertEqual(self.client.commands, [])
 
     async def test_mixed_text_reaches_the_query_handler_once(self):
         self.gateway.state.bind("group-a", "secret", "secret")
@@ -128,11 +192,11 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
         calls = []
         async def ask(project, question, history, received, stream):
             calls.append((project, question))
-            return "统计回答", [{"msgtype": "image", "image": {"base64": "png", "md5": "digest"}}]
+            return "统计回答", [chart_image()]
         self.gateway.ask = ask
         await self.gateway.on_message(frame(question="每个组本周的代码热力图"))
         self.assertEqual(calls, [("project-a", "每个组本周的代码热力图")])
-        self.assertEqual(self.client.replies[-1][2]["msg_item"][0]["msgtype"], "image")
+        self.assertEqual(self.client.images[-1][1]["msgtype"], "image")
 
     async def test_unbound_room_is_rejected_without_backend_or_history(self):
         await self.gateway.on_text(frame())

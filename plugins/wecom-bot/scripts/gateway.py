@@ -9,6 +9,7 @@ import time
 import uuid
 from pathlib import Path
 from urllib.parse import quote
+from media import ImageDeliveryError, confirm_ack, upload_image
 from channel import Conversations, incoming_text, utf8_limit, citation_footer, render_grounded_chart, absolute_source_links, image_reply_caption
 
 
@@ -130,12 +131,23 @@ class Gateway:
 
     async def send_final(self, frame, stream, answer, images):
         count = len(images or [])
+        body = frame.get("body") or {}
+        target = (body.get("from") or {}).get("userid") if body.get("chattype") == "single" or not body.get("chatid") else body.get("chatid")
+        if count and not target:
+            raise ImageDeliveryError("image_recipient_missing")
+        media_ids = [await upload_image(self.client, item, index+1) for index, item in enumerate(images or [])]
         content = image_reply_caption(answer, count) if count else utf8_limit(answer)
-        ack = await self.client.reply_stream(frame, stream, content, True, msg_item=images)
-        code = ack.get("errcode") if isinstance(ack, dict) else None
-        print(f"reply_delivery images={count} text_bytes={len(content.encode())} errcode={code if isinstance(code, int) else 'missing'}", flush=True)
-        if code != 0:
+        ack = await self.client.reply_stream(frame, stream, content, True)
+        if not isinstance(ack, dict) or ack.get("errcode") != 0:
             raise RuntimeError("reply_delivery_not_confirmed")
+        print(f"reply_delivery images=0 text_bytes={len(content.encode())} errcode=0", flush=True)
+        for index, media_id in enumerate(media_ids, 1):
+            try:
+                ack = await self.client.send_message(target, {"msgtype": "image", "image": {"media_id": media_id}})
+                confirm_ack(ack)
+            except Exception as error:
+                raise ImageDeliveryError("image_send_failed") from error
+            print(f"image_delivery index={index} total={count} errcode=0", flush=True)
 
     async def on_message(self, frame):
         body = frame.get("body") or {}
@@ -222,6 +234,9 @@ class Gateway:
                 await self.send_final(frame, stream, answer, images)
                 self.state.append(room, sender, question, answer)
                 print("message_completed", flush=True)
+        except ImageDeliveryError:
+            print("image_delivery_failed", flush=True)
+            await self.client.reply_stream(frame, stream, "统计图片未全部发送成功，请稍后重试或在 Shepherd 网页查看。", True)
         except ValueError:
             await self.client.reply_stream(frame, stream, "统计图支持今天或最近 1～365 天的团队汇总，例如：最近 7 天代码提交统计图。其他问题可直接用文字提问。", True)
         except Exception as error:
