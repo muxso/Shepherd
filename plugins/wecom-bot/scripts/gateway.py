@@ -147,6 +147,17 @@ class Gateway:
             print("message_skipped duplicate", flush=True)
             return
         stream = "shepherd_"+uuid.uuid4().hex
+        identity = re.sub(r"[\s？?！!。]", "", question).lower()
+        if identity in ("我的用户id是什么", "我的用户id", "查看我的用户id", "绑定我的用户id", "我的userid", "当前会话id", "群id", "查看群id"):
+            direct = body.get("chattype") == "single" or not room
+            with contextlib.suppress(Exception):
+                await asyncio.wait_for(self.report_status({"kind": "direct" if direct else "group", "externalId": sender if direct else room, "senderId": sender}), timeout=3)
+            text = "你的企业微信用户 ID：`"+sender+"`"
+            if not direct:
+                text += "\n当前群 ID：`"+room+"`"
+            text += "\n请管理员在 RAG 后台展开现有机器人渠道，在待授权会话中选择项目并授权。身份查询不会自动绑定或授予项目访问权限。"
+            await self.client.reply_stream(frame, stream, text, True)
+            return
         config = self.config()
         binding = re.fullmatch(r"(?:绑定|bind)\s+(\S+)", question, flags=re.I)
         remote = os.environ.get("WECOM_REMOTE_POLICY", "1") == "1"
@@ -175,7 +186,7 @@ class Gateway:
         else:
             authorized = bool(room) and self.state.allowed(room, config.get("allowedChatIds", []))
         if not authorized:
-            await self.client.reply_stream(frame, stream, "此会话尚未授权。请管理员在 Shepherd 的 RAG 后台授权本群或私聊用户，并选择可访问的项目；授权前不会读取或发送项目资料。", True)
+            await self.client.reply_stream(frame, stream, "此会话尚未授权。请管理员在 Shepherd 的 RAG 后台展开现有机器人渠道，在待授权会话中选择项目并授权；授权前不会读取或发送项目资料。发送“我的用户 ID”可查看当前身份。", True)
             return
         if not question:
             print("message_skipped unsupported_content", flush=True)

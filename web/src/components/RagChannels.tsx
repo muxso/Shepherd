@@ -18,6 +18,8 @@ export default function RagChannels() {
   const [saving, setSaving] = useState(false)
   const [open, setOpen] = useState(false)
   const [editing, setEditing] = useState<Channel>()
+  const [pendingAuth, setPendingAuth] = useState<{ channel: Channel; conversation: Conversation }>()
+  const [authProject, setAuthProject] = useState('')
   const [codeChannel, setCodeChannel] = useState<Channel>()
   const [codeProject, setCodeProject] = useState('')
   const [minutes, setMinutes] = useState(30)
@@ -46,8 +48,28 @@ export default function RagChannels() {
     ]} expandable={{ expandedRowRender: c => <>
       <Table size="small" rowKey={r => `${r.kind}:${r.externalId}`} pagination={false} dataSource={c.conversations} columns={[{ title: '类型', render: (_, p) => p.kind === 'group' ? '群聊' : '私聊用户' }, { title: '会话／用户 ID', dataIndex: 'externalId' }, { title: '项目', render: (_, p) => projects.find(x => x.id === p.projectId)?.name || p.projectId }, { title: '状态', render: (_, p) => p.enabled ? '已授权' : '已停用' }]} />
       <h4>待授权会话（仅保存身份和接收时间，不保存消息正文）</h4>
-      <Table size="small" rowKey={r => `${r.kind}:${r.externalId}`} pagination={false} dataSource={c.pending} columns={[{ title: '类型', render: (_, p) => p.kind === 'group' ? '群聊' : '私聊用户' }, { title: '会话／用户 ID', dataIndex: 'externalId' }, { title: '最近接收', render: (_, p) => when(p.seenAt) }, { title: '操作', render: (_, p) => <Button size="small" onClick={() => edit(c, { ...p, projectId: '', enabled: true })}>选择项目并授权</Button> }]} />
+      <Table size="small" rowKey={r => `${r.kind}:${r.externalId}`} pagination={false} dataSource={c.pending} columns={[{ title: '类型', render: (_, p) => p.kind === 'group' ? '群聊' : '私聊用户' }, { title: '会话／用户 ID', dataIndex: 'externalId' }, { title: '最近接收', render: (_, p) => when(p.seenAt) }, { title: '操作', render: (_, p) => <Button size="small" disabled={!c.enabled} onClick={() => { setAuthProject(''); setPendingAuth({ channel: c, conversation: { kind: p.kind, externalId: p.externalId, projectId: '', enabled: true } }) }}>选择项目并授权</Button> }]} />
     </> }} />
+    <Modal title="授权现有机器人会话" open={!!pendingAuth} onCancel={() => setPendingAuth(undefined)} confirmLoading={saving} okText="授权此会话" okButtonProps={{ disabled: !authProject }} onOk={async () => {
+      if (!pendingAuth || !authProject) return
+      setSaving(true)
+      try {
+        const { channel, conversation } = pendingAuth
+        const latest = await http.get<{ items: Channel[] }>('/system/rag/channels')
+        const current = latest.items.find(c => c.id === channel.id)
+        if (!current || !current.enabled) throw new Error('渠道已停用或删除，请刷新后重试')
+        await http.put(`/system/rag/channels/${encodeURIComponent(current.id)}`, {
+          name: current.name, serviceUserId: current.serviceUserId, enabled: current.enabled, allowBinding: current.allowBinding,
+          conversations: [...current.conversations.filter(c => c.kind !== conversation.kind || c.externalId !== conversation.externalId), { ...conversation, projectId: authProject }],
+        })
+        setPendingAuth(undefined); load(); message.success('会话已授权，下次提问生效')
+      } catch (e) { error(e) } finally { setSaving(false) }
+    }}>
+      <p>机器人渠道：{pendingAuth?.channel.name}</p>
+      <p>{pendingAuth?.conversation.kind === 'direct' ? '私聊用户 ID' : '群 ID'}：<Typography.Text copyable>{pendingAuth?.conversation.externalId}</Typography.Text></p>
+      <p>复用当前机器人的专用账号与权限。请选择此会话可访问的项目。</p>
+      <Select aria-label="会话授权项目" placeholder="选择授权项目" style={{ width: '100%' }} value={authProject || undefined} onChange={setAuthProject} options={projects.map(p => ({ value: p.id, label: p.name }))} />
+    </Modal>
     <Modal title={editing ? '配置机器人授权' : '添加机器人渠道'} open={open} onCancel={() => setOpen(false)} onOk={save} confirmLoading={saving} width={880} destroyOnHidden>
       <Form form={form} layout="vertical">
         <Form.Item name="name" label="渠道名称" rules={[{ required: true }]}><Input maxLength={120} /></Form.Item>

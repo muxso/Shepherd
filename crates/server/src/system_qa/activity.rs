@@ -50,6 +50,8 @@ impl Intent {
                 "工作",
                 "摸鱼",
                 "偷懒",
+                "刷需求",
+                "绩效",
                 "贡献",
                 "提交情况",
                 "提交记录",
@@ -183,6 +185,86 @@ fn clean(value: &str) -> String {
     value.replace(['\n', '\r', '[', ']', '`', '<', '>'], " ").chars().take(160).collect()
 }
 
+#[derive(Default)]
+struct MemberActivity {
+    groups: BTreeSet<String>,
+    commits: usize,
+    dates: BTreeSet<String>,
+    repositories: BTreeSet<String>,
+    requirements: BTreeSet<String>,
+    additions: u64,
+    deletions: u64,
+    missing_stats: usize,
+    known_stats: usize,
+}
+
+fn member_summary(rows: &BTreeMap<(String, String), Vec<u64>>, events: &[&Value]) -> String {
+    let mut members: BTreeMap<String, MemberActivity> = BTreeMap::new();
+    for (actor, group) in rows.keys() {
+        members.entry(actor.clone()).or_default().groups.insert(group.clone());
+    }
+    for event in events {
+        let actor = field(event, "actor");
+        let member =
+            members.entry(if actor.is_empty() { "未关联账号" } else { actor }.into()).or_default();
+        member.commits += 1;
+        member.dates.insert(field(event, "date").into());
+        let repo = event
+            .get("repoId")
+            .filter(|id| !id.is_null())
+            .map(Value::to_string)
+            .unwrap_or_else(|| field(event, "repo").to_owned());
+        if !repo.is_empty() {
+            member.repositories.insert(repo);
+        }
+        for requirement in event["requirements"].as_array().into_iter().flatten() {
+            let id = field(requirement, "externalId");
+            if !id.is_empty() {
+                member.requirements.insert(id.into());
+            }
+        }
+        member.known_stats += usize::from(event["additions"].as_u64().is_some())
+            + usize::from(event["deletions"].as_u64().is_some());
+        member.additions += event["additions"].as_u64().unwrap_or(0);
+        member.deletions += event["deletions"].as_u64().unwrap_or(0);
+        if event["additions"].as_u64().is_none() || event["deletions"].as_u64().is_none() {
+            member.missing_stats += 1;
+        }
+    }
+    let mut ranked: Vec<_> = members.into_iter().collect();
+    ranked.sort_by(|a, b| b.1.commits.cmp(&a.1.commits).then_with(|| a.0.cmp(&b.0)));
+    let mut text = "\n\n**成员已观测活动（按提交次数排序，不代表绩效排名）**\n\n| 成员 | 分组 | 提交 | 活跃天 | 仓库 | 关联需求 | 已知新增 / 删除 |\n| --- | --- | ---: | ---: | ---: | ---: | --- |".to_owned();
+    for (actor, member) in ranked.iter().take(60) {
+        let count =
+            if member.commits == 0 { "未观测到".into() } else { member.commits.to_string() };
+        let lines = if member.commits == 0 {
+            "—".into()
+        } else if member.known_stats == 0 {
+            "未知（未采集行数）".into()
+        } else {
+            format!(
+                "+{} / -{}{}",
+                member.additions,
+                member.deletions,
+                if member.missing_stats > 0 { "（行数不全，仅已知下限）" } else { "" }
+            )
+        };
+        text.push_str(&format!(
+            "\n| {} | {} | {count} | {} | {} | {} | {lines} |",
+            clean(actor).replace('|', "／"),
+            clean(&member.groups.iter().cloned().collect::<Vec<_>>().join("、")).replace('|', "／"),
+            member.dates.len(),
+            member.repositories.len(),
+            member.requirements.len()
+        ));
+    }
+    if ranked.len() > 60 {
+        text.push_str(&format!("\n\n仅展示前 60 名，范围内共 {} 名成员或原始账号。", ranked.len()));
+    }
+    text.push_str("\n\n未观测到仅表示当前采集范围没有记录；仓库与需求按成员去重，跨成员不可直接相加。未关联需求的提交仍计入提交数。");
+    text
+}
+
 pub(super) fn answer(
     context: &QueryContext,
     intent: &Intent,
@@ -221,9 +303,23 @@ pub(super) fn answer(
             "统计数据覆盖日期与请求不一致，请重试；未将缺失日期按零处理。".into(),
         ));
     }
-    if ["摸鱼", "偷懒", "绩效"].iter().any(|word| context.question.contains(word))
-        && selected.is_empty()
-    {
+    let assessment =
+        ["摸鱼", "偷懒", "绩效", "刷需求"].iter().any(|word| context.question.contains(word));
+    let cohort = [
+        "谁在",
+        "谁是",
+        "哪些人",
+        "哪些成员",
+        "全员",
+        "全体成员",
+        "团队",
+        "全组",
+        "所有人",
+        "所有成员",
+    ]
+    .iter()
+    .any(|word| context.question.contains(word));
+    if assessment && selected.is_empty() && known_groups.is_empty() && !cohort {
         return Err(RagError::Backend(
             "当前统计名单未识别所指成员，请提供姓名或已关联账号；不能将未识别人员判为无提交。"
                 .into(),
@@ -380,7 +476,9 @@ pub(super) fn answer(
             _ => "已采集代码提交",
         },
     };
-    let person = if selected.is_empty() {
+    let person = if selected.is_empty() && !known_groups.is_empty() {
+        known_groups.iter().map(|name| clean(name)).collect::<Vec<_>>().join("、")
+    } else if selected.is_empty() {
         "项目全部已采集成员".into()
     } else {
         selected.iter().map(|name| clean(name)).collect::<Vec<_>>().join("、")
@@ -422,8 +520,11 @@ pub(super) fn answer(
             "\n\n采集覆盖尚不完整；以下仅代表已同步记录，不能据此认定没有工作或没有提交。",
         );
     }
-    if ["摸鱼", "偷懒", "绩效"].iter().any(|word| context.question.contains(word)) {
-        content.push_str("\n\nGit 记录不能用于直接判断是否摸鱼、工作时长或绩效。");
+    if assessment {
+        content.push_str("\n\nGit 记录不能用于直接判断是否摸鱼、工作时长或绩效；关联需求数量不等于交付数量，也不能证明刷需求。");
+        if intent.role == "code" && selected.is_empty() && !intent.groups {
+            content.push_str(&member_summary(&rows, &events));
+        }
     }
     if intent.chart {
         content
@@ -518,6 +619,68 @@ mod tests {
         json!({"from":"2026-11-02","through":"2026-11-08","observedAt":"2026-11-08T20:00:00+08:00","coverage":{"complete":false},
             "members":[{"name":"成员甲","group":"研发一组"},{"name":"成员乙","group":"产品组"}],
             "events":[{"kind":"commit","actor":"成员甲","authorRaw":"account-a","group":"研发一组","date":"2026-11-04","at":"2026-11-04T18:00:00+08:00","repo":"service-a","sha":"abc123","title":"订单修正"}]})
+    }
+    #[test]
+    fn team_assessment_uses_last_week_and_reports_members_without_inventing_performance() {
+        let mut request = context("分析一下上周git，评估一下谁在摸鱼，谁在刷需求");
+        request.at_ms += 86_400_000;
+        let intent = Intent::parse(&request.question).expect("intent");
+        let range = window(&request.question, request.at_ms).expect("range");
+        assert_eq!(range.from.to_string(), "2026-11-02");
+        assert_eq!(range.through.to_string(), "2026-11-08");
+        let mut fixture = data();
+        fixture["events"][0]["requirements"] =
+            json!([{"externalId":"REQ-1"},{"externalId":"REQ-1"}]);
+        let result =
+            answer(&request, &intent, &range, &json!({"id":"source"}), &fixture).expect("answer");
+        assert_eq!(result.scope["returned"], 1);
+        assert!(result
+            .content
+            .contains("| 成员甲 | 研发一组 | 1 | 1 | 1 | 1 | 未知（未采集行数） |"));
+        assert!(result.content.contains("| 成员乙 | 产品组 | 未观测到 |"));
+        assert!(result.content.contains("不能证明刷需求"));
+    }
+    #[test]
+    fn member_summary_deduplicates_links_and_excludes_other_dates() {
+        let request = context("本周团队谁在摸鱼 git");
+        let intent = Intent::parse(&request.question).expect("intent");
+        let range = window(&request.question, request.at_ms).expect("range");
+        let mut fixture = data();
+        fixture["events"][0]["additions"] = json!(9);
+        fixture["events"][0]["deletions"] = json!(6);
+        fixture["events"][0]["requirements"] = json!([{"externalId":"REQ-1"}]);
+        let mut another = fixture["events"][0].clone();
+        another["sha"] = json!("def456");
+        fixture["events"].as_array_mut().expect("events").push(another.clone());
+        another["date"] = json!("2026-11-01");
+        fixture["events"].as_array_mut().expect("events").push(another);
+        let result =
+            answer(&request, &intent, &range, &json!({"id":"source"}), &fixture).expect("answer");
+        assert_eq!(result.scope["returned"], 2);
+        assert!(result.content.contains("| 成员甲 | 研发一组 | 2 | 1 | 1 | 1 | +18 / -12 |"));
+    }
+    #[test]
+    fn assessment_preserves_named_member_and_group_scope_and_rejects_unknown_people() {
+        for (question, expected) in [
+            ("成员甲本周摸鱼了吗", Some(1)),
+            ("产品组谁在摸鱼", Some(0)),
+            ("产品组本周摸鱼了吗", Some(0)),
+            ("成员丙本周摸鱼了吗", None),
+        ] {
+            let request = context(question);
+            let intent = Intent::parse(question).expect("intent");
+            let range = window(question, request.at_ms).expect("range");
+            let result = answer(&request, &intent, &range, &json!({"id":"source"}), &data());
+            if let Some(count) = expected {
+                let answer = result.expect("answer");
+                assert_eq!(answer.scope["returned"], count);
+                if question.contains("产品组") {
+                    assert!(!answer.content.contains("成员甲"));
+                }
+            } else {
+                assert!(result.is_err());
+            }
+        }
     }
     #[test]
     fn sunday_windows_are_calculated_before_querying() {
