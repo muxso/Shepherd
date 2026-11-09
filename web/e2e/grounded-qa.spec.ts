@@ -100,3 +100,28 @@ test('channel admin starts disabled and requires enabling backend group binding'
   await expect(modal.getByLabel('允许一次性绑定群')).not.toBeChecked()
   await page.screenshot({ path: testInfo.outputPath('rag-channel-permissions.png') })
 })
+
+
+test('pending direct authorization reuses the channel account and preserves group access', async ({ page }) => {
+  await setup(page)
+  await page.route('**/auth/me', route => route.fulfill({ json: { userId: 'user', permissions: ['SYSTEM_USER:UPDATE', 'SYSTEM_USER:READ', 'PROJECT:READ', 'RAG:READ'] } }))
+  await page.route('**/system/rag/config', route => route.fulfill({ json: { embedUrl: '', embedModel: '', embedDim: 1024, chatUrl: '', chatModel: '', maxTokens: 2000, topK: 8, rerank: true } }))
+  const group = { kind: 'group', externalId: 'group-a', projectId: 'project', enabled: true }
+  const channel = { id: 'connector', name: 'Project bot', serviceUserId: 'bot', enabled: true, allowBinding: false, conversations: [group], pending: [{ kind: 'direct', externalId: 'user-a', senderId: 'user-a', seenAt: '2026-11-09T00:00:00Z' }] }
+  await page.route('**/system/rag/channels', route => route.fulfill({ json: { items: [channel] } }))
+  let saved: Record<string, unknown> | undefined
+  await page.route('**/system/rag/channels/connector', route => { saved = route.request().postDataJSON(); return route.fulfill({ json: { id: 'connector' } }) })
+  await page.goto('/system/params')
+  await page.getByRole('button', { name: '展开行' }).click()
+  await page.getByRole('button', { name: '选择项目并授权' }).click()
+  const modal = page.getByRole('dialog')
+  await expect(modal).toContainText('user-a')
+  await expect(modal).toContainText('Project bot')
+  await expect(modal.getByRole('button', { name: '授权此会话' })).toBeDisabled()
+  await modal.getByRole('combobox', { name: '会话授权项目' }).click()
+  await page.locator('.ant-select-dropdown').getByTitle('Project', { exact: true }).click()
+  await modal.getByRole('button', { name: '授权此会话' }).click()
+  await expect.poll(() => saved?.serviceUserId).toBe('bot')
+  expect(saved?.allowBinding).toBe(false)
+  expect(saved?.conversations).toEqual([group, { kind: 'direct', externalId: 'user-a', projectId: 'project', enabled: true }])
+})

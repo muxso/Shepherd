@@ -148,6 +148,20 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(calls, ["project-a"])
         self.assertIn("尚未授权", self.client.replies[-1][0])
 
+    async def test_identity_query_only_returns_current_sender_without_granting_access(self):
+        receipts = []
+        async def report(receipt=None): receipts.append(receipt)
+        self.gateway.report_status = report
+        with patch.dict(os.environ, {"WECOM_REMOTE_POLICY": "1"}):
+            await self.gateway.on_text(frame(room="", question="我的用户 ID 是什么？"))
+            self.assertIn("user-a", self.client.replies[-1][0])
+            self.assertIn("不会自动绑定", self.client.replies[-1][0])
+            await self.gateway.on_text(frame(message="m2", question="绑定我的用户 ID"))
+            self.assertIn("group-a", self.client.replies[-1][0])
+        self.assertEqual(receipts[0], {"kind": "direct", "externalId": "user-a", "senderId": "user-a"})
+        self.assertFalse(self.gateway.state.allowed("group-a", []))
+        self.assertEqual(self.gateway.state.history("group-a", "user-a"), [])
+
     async def test_remote_binding_never_uses_the_local_setup_code(self):
         async def bind(room, code):
             return False
