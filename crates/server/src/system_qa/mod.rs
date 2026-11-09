@@ -3,6 +3,7 @@ mod activity;
 mod audit;
 mod business;
 mod devops;
+mod team;
 use async_trait::async_trait;
 use axum::{body::Body, http::Request, Router};
 use rag::{
@@ -106,6 +107,9 @@ impl QuerySource for SystemQueries {
         } else {
             context
         };
+        if team::requested(&context.question) {
+            return team::answer(self, context, authorization).await.map(Some);
+        }
         if let Some(answer) = devops::answer(self, context, authorization).await? {
             return Ok(Some(answer));
         }
@@ -301,6 +305,40 @@ mod tests {
         (SystemQueries::new(routes), format!("Bearer {token}"), context)
     }
     #[tokio::test]
+    async fn general_team_output_returns_three_role_charts_without_generation() {
+        let (provider, token, mut context) =
+            setup("PROJECT:READ,REQUIREMENT:READ,BUG:READ,FUNCTIONAL_CASE:READ").await;
+        context.question = "云效研发统计，团队产出发我下".into();
+        let answer = provider.answer(&context, &token).await.unwrap().unwrap();
+        assert_eq!(answer.scope["kind"], "team_output_overview");
+        assert_eq!(answer.charts.len(), 3);
+        assert_eq!(answer.scope["roles"][0]["counts"]["commit"], 1);
+        assert!(answer.charts.iter().all(|chart| chart["kind"] == "activity_heatmap"));
+        assert!(answer.content.contains("产品"));
+        assert!(answer.content.contains("测试"));
+    }
+    #[tokio::test]
+    async fn git_summary_paraphrases_share_live_counts_dates_and_person_scope() {
+        let (provider, token, mut context) = setup("PROJECT:READ").await;
+        for question in [
+            "扫描全部 git 分析 看下成员甲最近在干嘛",
+            "git梳理成员甲最近在忙什么",
+            "云效和git看看成员甲最近做什么",
+        ] {
+            context.question = question.into();
+            let answer = provider.answer(&context, &token).await.unwrap().unwrap();
+            assert_eq!(answer.scope["returned"], 1);
+            assert_eq!(answer.scope["from"], "2026-11-02");
+            assert_eq!(answer.scope["through"], "2026-11-08");
+            assert!(answer.content.contains("已观测工作线索"));
+            assert_eq!(answer.charts[0]["kind"], "activity_heatmap");
+            assert!(answer.content.contains("默认最近 7 天"));
+            assert!(answer.content.contains("并未实时扫描"));
+        }
+        context.question = "扫描全部git分析成员丙最近在干嘛".into();
+        assert!(provider.answer(&context, &token).await.is_err());
+    }
+    #[tokio::test]
     async fn overdue_person_questions_use_authenticated_exact_owner_filters_without_a_planner() {
         let (provider, token, mut context) = setup("PROJECT:READ,REQUIREMENT:READ").await;
         context.question = "成员甲有哪些任务延期".into();
@@ -308,6 +346,7 @@ mod tests {
         assert_eq!(answer.scope["evidence"]["total"], 1);
         assert_eq!(answer.scope["filters"]["owner"], "成员甲");
         assert!(answer.content.contains("REQ-1 Order correction"));
+        assert_eq!(answer.charts[0]["metric"], "延期天数（最多展示12项）");
         assert!(answer.content.contains("排除待发布"));
         assert!(!answer.content.contains("成员乙"));
         assert!(answer.sources[1]["url"].as_str().unwrap().contains("reference=requirement-a"));

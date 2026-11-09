@@ -388,19 +388,62 @@ fn overdue_answer(
     content.push_str(
         "\n\n仅代表最近成功同步的当前快照；未同步、未设置截止日期和历史延期不能按零处理。",
     );
+    let today = activity::window("今天", context.at_ms)?.through;
+    let late_days: Vec<_> = items
+        .iter()
+        .take(12)
+        .filter_map(|row| {
+            let due = chrono::NaiveDate::parse_from_str(row["due"].as_str()?, "%Y-%m-%d").ok()?;
+            let days = (today - due).num_days();
+            if days <= 0 {
+                return None;
+            }
+            let label = row["serial"]
+                .as_str()
+                .filter(|serial| !serial.is_empty())
+                .unwrap_or_else(|| row["title"].as_str().unwrap_or("未命名"));
+            Some((label.chars().take(16).collect::<String>(), days))
+        })
+        .collect();
+    let charts = if total == 0 {
+        vec![
+            json!({"kind":"bar","title":"当前已同步延期工作项","metric":"条","labels":[owner.unwrap_or("全员")],"values":[0],"from":today.to_string(),"through":today.to_string()}),
+        ]
+    } else if !late_days.is_empty() {
+        vec![
+            json!({"kind":"bar","title":format!("{} · 延期工作项",owner.unwrap_or("全员")),"metric":"延期天数（最多展示12项）","labels":late_days.iter().map(|row|&row.0).collect::<Vec<_>>(),"values":late_days.iter().map(|row|row.1).collect::<Vec<_>>(),"from":today.to_string(),"through":today.to_string()}),
+        ]
+    } else {
+        Vec::new()
+    };
     Ok(GroundedAnswer {
         content,
         sources,
-        charts: vec![],
+        charts,
         scope: json!({"kind":"devops_query","projectId":context.project_id,"sourceId":id,"observedAt":source["last_success_at"],"filters":{"overdue":true,"owner":owner},"evidence":{"total":total,"returned":items.len(),"snapshot":true}}),
     })
 }
 
 fn prefers_activity(q: &str) -> bool {
     let q = q.to_lowercase();
-    ["git", "代码", "提交情况", "提交记录", "摸鱼", "偷懒", "干啥", "干了", "工作情况", "工作内容"]
-        .iter()
-        .any(|word| q.contains(word))
+    [
+        "git",
+        "代码",
+        "提交情况",
+        "提交记录",
+        "摸鱼",
+        "偷懒",
+        "干啥",
+        "干了",
+        "工作情况",
+        "工作内容",
+        "干嘛",
+        "干吗",
+        "在忙",
+        "做什么",
+    ]
+    .iter()
+    .any(|word| q.contains(word))
 }
 #[cfg(test)]
 mod tests {
