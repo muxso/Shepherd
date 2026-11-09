@@ -228,7 +228,7 @@ pub(super) fn rules(question: &str) -> Option<Plan> {
     if q.contains("项目服务") {
         add("test_services");
     }
-    if contains(&q, &["研发任务", "开发任务", "任务拆分"]) {
+    if contains(&q, &["任务"]) {
         add("tasks");
     }
     if contains(&q, &["交付执行", "交付记录"]) {
@@ -437,7 +437,7 @@ impl Business {
             None => {
                 let descriptors: Vec<_> =
                     RESOURCES.iter().map(|r| json!({"id":r.id,"label":r.label})).collect();
-                let prompt=format!("Classify a request for live project business records. Return JSON only with resources (0-4 IDs from catalog), text (literal quoted name from question, else empty), owner (literal person name from question or 我, else empty), status (empty, OPEN, FAILED, DRAFT, DELIVERED, COMPLETED, SUCCESS, PASSED, RUNNING, PENDING, REVIEWED), group_by (status, priority, module, service, owner, date), chart (boolean), updated (boolean), overdue (boolean). Use resources:[] for policy, how-to, code explanation, document knowledge, Git author/change attribution, or uncertain intent. Never invent names, IDs, filters, SQL, URLs, or dates. Catalog: {}",serde_json::to_string(&descriptors).unwrap_or_default());
+                let prompt=format!("Classify a request for live project business records. Return JSON only with resources (0-4 IDs from catalog), text (literal quoted name from question, else empty), owner (literal person name from question or 我, else empty), status (empty, OPEN, FAILED, DRAFT, DELIVERED, COMPLETED, SUCCESS, PASSED, RUNNING, PENDING, REVIEWED), group_by (status, priority, module, service, owner, date), chart (boolean), updated (boolean), overdue (boolean). Overdue/late/延期/逾期 is a deadline predicate: set overdue=true and leave status empty unless a separate explicit lifecycle status is requested. Use resources:[] for policy, how-to, code explanation, document knowledge, Git author/change attribution, or uncertain intent. Never invent names, IDs, filters, SQL, URLs, or dates. Catalog: {}",serde_json::to_string(&descriptors).unwrap_or_default());
                 let response = match tokio::time::timeout(
                     std::time::Duration::from_secs(12),
                     self.planner.complete(&prompt, &context.question),
@@ -486,6 +486,12 @@ impl Business {
             return Err(RagError::Backend(
                 "未识别所指负责人，请提供项目成员姓名或选择按人分布；未扩大到全项目查询。".into(),
             ));
+        }
+        if contains(&context.question, &["延期", "逾期"]) {
+            plan.overdue = true;
+            if ["DELAYED", "OVERDUE", "延期", "逾期"].contains(&plan.status.as_str()) {
+                plan.status.clear();
+            }
         }
         validate(&plan, &context.question)?;
         self.execute(context, &plan).await.map(Some)
@@ -553,6 +559,19 @@ impl Business {
             let owner =
                 if plan.owner == "我" { context.user.user_id.as_str() } else { &plan.owner };
             let projection = self.projection(r).await?;
+            if plan.overdue
+                && !projection.contains("'due_date'")
+                && !projection.contains("'end_at'")
+            {
+                content.push_str(&format!(
+                    "\n{}：当前模块没有计划截止时间，无法判定延期；未按零条处理。\n",
+                    r.label
+                ));
+                results.push(
+                    json!({"resource":id,"status":"unsupported","reason":"missing_deadline"}),
+                );
+                continue;
+            }
             let sql = read_sql(r, plan.group_by, plan.updated, Some(&projection));
             let value: Value = sqlx::query_scalar(&sql)
                 .bind(&context.project_id)
@@ -738,6 +757,7 @@ mod tests {
             ("项目功能用例按服务统计图", "functional_cases"),
             ("本周失败的接口执行报告有哪些", "api_executions"),
             ("延期需求有哪些", "requirements"),
+            ("成员甲有哪些任务延期", "tasks"),
             ("全系统项目概览", "bugs"),
         ] {
             let p = rules(question).expect("business plan");
@@ -864,6 +884,10 @@ mod tests {
             business.execute(&context, &plan).await.unwrap().scope["results"][0]["total"],
             0
         );
+        context.question = "研发任务延期有哪些".into();
+        let unsupported = business.answer(&context).await.unwrap().unwrap();
+        assert_eq!(unsupported.scope["results"][0]["status"], "unsupported");
+        assert!(unsupported.content.contains("无法判定延期"));
         context.user.permissions = webauth::PermissionSet::from_raw(["PROJECT:READ"]).unwrap();
         let result = business.execute(&context, &plan).await.unwrap();
         assert_eq!(result.scope["results"][0]["status"], "denied");

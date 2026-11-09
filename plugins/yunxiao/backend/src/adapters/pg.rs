@@ -665,6 +665,13 @@ impl PgStore {
         let page = q.page.unwrap_or(1).max(1);
         let size = q.page_size.unwrap_or(30).clamp(1, 100);
         if q.metric.is_some() || q.date.is_some() || q.period.unwrap_or(false) {
+            if q.owner.as_ref().is_some_and(|owner| !owner.is_empty())
+                || q.include_owners.unwrap_or(false)
+            {
+                return Err(Error::Invalid(
+                    "owner filters are supported for current record snapshots only".into(),
+                ));
+            }
             return self.productivity_records(source, q, size, page).await;
         }
         let kind = q.kind.unwrap_or_else(|| "requirement".into());
@@ -688,7 +695,8 @@ impl PgStore {
         let group = q.group.unwrap_or_default();
         let delayed = q.delayed_only.unwrap_or(false);
         let status = q.status.unwrap_or_default();
-        let filters=format!("source_id=$1 AND active AND kind=$2 AND (payload->>'title' ILIKE $3 OR external_id ILIKE $3 OR payload->>'serial' ILIKE $3 OR payload->>'owner' ILIKE $3 OR payload->>'author' ILIKE $3 OR payload->>'authorRaw' ILIKE $3) AND ($4='' OR payload->>'group'=$4) AND (NOT $5 OR ({LATE})) AND ($7='' OR payload->>'status'=$7) AND (kind<>'commit' OR (payload->>'authoredAt')::timestamptz>=now()-make_interval(days => $6::int))");
+        let owner = q.owner.unwrap_or_default();
+        let filters=format!("source_id=$1 AND active AND kind=$2 AND (payload->>'title' ILIKE $3 OR external_id ILIKE $3 OR payload->>'serial' ILIKE $3 OR payload->>'owner' ILIKE $3 OR payload->>'author' ILIKE $3 OR payload->>'authorRaw' ILIKE $3) AND ($4='' OR payload->>'group'=$4) AND (NOT $5 OR ({LATE})) AND ($7='' OR payload->>'status'=$7) AND ($8='' OR payload->>'owner'=$8) AND (kind<>'commit' OR (payload->>'authoredAt')::timestamptz>=now()-make_interval(days => $6::int))");
         let days = q.days.unwrap_or(7).clamp(1, 366) as i32;
         let n = sqlx::query_scalar::<_, i64>(&format!(
             "SELECT count(*) FROM ms_devops_statistics_resolved WHERE {filters}"
@@ -700,12 +708,19 @@ impl PgStore {
         .bind(delayed)
         .bind(days)
         .bind(&status)
+        .bind(&owner)
         .fetch_one(&self.pool)
         .await
         .map_err(db)?;
-        let rows=sqlx::query_scalar::<_,Value>(&record_query(&filters,"COALESCE(e.payload->>'authoredAt',e.payload->>'updatedAt',e.payload->>'serial',e.external_id) DESC,e.external_id","$8","$9"))
-            .bind(source).bind(&kind).bind(&search).bind(&group).bind(delayed).bind(days).bind(&status).bind(size).bind((page-1).saturating_mul(size)).fetch_all(&self.pool).await.map_err(db)?;
-        Ok(json!({"total":n,"items":rows,"page":page,"pageSize":size}))
+        let rows=sqlx::query_scalar::<_,Value>(&record_query(&filters,"COALESCE(e.payload->>'authoredAt',e.payload->>'updatedAt',e.payload->>'serial',e.external_id) DESC,e.external_id","$9","$10"))
+            .bind(source).bind(&kind).bind(&search).bind(&group).bind(delayed).bind(days).bind(&status).bind(&owner).bind(size).bind((page-1).saturating_mul(size)).fetch_all(&self.pool).await.map_err(db)?;
+        let mut result = json!({"total":n,"items":rows,"page":page,"pageSize":size});
+        if q.include_owners.unwrap_or(false) {
+            let owners: Vec<String> = sqlx::query_scalar("SELECT DISTINCT payload->>'owner' FROM ms_devops_statistics_resolved WHERE source_id=$1 AND active AND kind=$2 AND COALESCE(payload->>'owner','')<>'' ORDER BY 1")
+                .bind(source).bind(&kind).fetch_all(&self.pool).await.map_err(db)?;
+            result["ownerOptions"] = json!(owners);
+        }
+        Ok(result)
     }
     async fn member_metrics_uncached(
         &self,

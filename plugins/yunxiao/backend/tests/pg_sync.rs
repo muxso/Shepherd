@@ -772,12 +772,12 @@ async fn defect_filters_and_pending_release_risk_use_the_same_source_facts() {
         Record {
             kind: "requirement".into(),
             external_id: "ready".into(),
-            data: json!({"serial":"R-1","title":"Ready","status":"待发布","priority":"高","due":due,"createdAt":at}),
+            data: json!({"serial":"R-1","title":"Ready","owner":"Bob","status":"待发布","priority":"高","due":due,"createdAt":at}),
         },
         Record {
             kind: "requirement".into(),
             external_id: "late".into(),
-            data: json!({"title":"Late","status":"开发中","priority":"高","due":due,"createdAt":at}),
+            data: json!({"title":"Late Bob mention","owner":"Alice","status":"开发中","priority":"高","due":due,"createdAt":at}),
         },
         Record {
             kind: "bug".into(),
@@ -880,6 +880,27 @@ async fn defect_filters_and_pending_release_risk_use_the_same_source_facts() {
         .expect("valid fixture");
     assert_eq!(late["total"], 1);
     assert_eq!(late["items"][0]["externalId"], "late");
+    for (owner, expected) in [("Alice", 1), ("Bob", 0), ("Unknown", 0)] {
+        let scoped = store
+            .records(
+                id,
+                ListQuery {
+                    kind: Some("requirement".into()),
+                    delayed_only: Some(true),
+                    owner: Some(owner.into()),
+                    include_owners: Some(true),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("owner snapshot");
+        assert_eq!(scoped["total"], expected);
+        assert_eq!(scoped["ownerOptions"], json!(["Alice", "Bob"]));
+        for row in scoped["items"].as_array().expect("items") {
+            assert_eq!(row["owner"], owner);
+        }
+    }
+
     assert_eq!(store.dashboard(id, 7).await.expect("valid fixture")["totals"]["delayed"], 1);
     assert!(store.bug_statistics("missing-source", BugStatisticsQuery::default()).await.is_err());
     for table in ["ms_devops_history", "ms_devops_entity", "ms_devops_sync_run", "ms_devops_source"]
