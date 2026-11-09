@@ -253,6 +253,46 @@ fn clean(value: &str) -> String {
 fn unresolved_summary_subject(question: &str) -> bool {
     let mut remaining = question.to_lowercase();
     for term in [
+        "云效研发统计",
+        "云效",
+        "研发统计",
+        "统计数据",
+        "数据",
+        "按组织",
+        "按组",
+        "按人",
+        "每个组",
+        "每个人",
+        "分组",
+        "各组",
+        "各成员",
+        "按天",
+        "按日",
+        "每天",
+        "发我下",
+        "发给我",
+        "发我",
+        "给我",
+        "帮我",
+        "请",
+        "热力图",
+        "统计图",
+        "趋势图",
+        "柱状图",
+        "图表",
+        "分布",
+        "提交次数",
+        "代码量",
+        "行数",
+        "仓库数",
+        "需求数",
+        "排序",
+        "降序",
+        "升序",
+        "本月",
+        "上月",
+        "这个月",
+        "上个月",
         "扫描全部",
         "提交情况",
         "提交记录",
@@ -736,9 +776,20 @@ pub(super) fn answer(
         .collect();
     let mut chart_rows: Vec<_> = rows
         .into_iter()
-        .map(|((label, group), values)| json!({"label":label,"group":group,"values":values}))
+        .map(|((label, group), values)| {
+            let metric_total = totals
+                .get(&(label.clone(), group.clone()))
+                .map_or_else(|| values.iter().sum::<u64>(), |items| items.len() as u64);
+            json!({"label":label,"group":group,"values":values,"metricTotal":metric_total})
+        })
         .collect();
     super::heatmap::expand(&mut chart_rows, &dates, &events, data, intent.role, intent.groups);
+    chart_rows.sort_by(|a, b| {
+        b["metricTotal"]
+            .as_u64()
+            .cmp(&a["metricTotal"].as_u64())
+            .then_with(|| field(a, "label").cmp(field(b, "label")))
+    });
     let charts = if intent.chart {
         let title = if intent.groups { "各组活动统计" } else { "成员活动统计" };
         if intent.chart_kind == "activity_heatmap" {
@@ -823,6 +874,19 @@ mod tests {
         }
         assert!(unresolved_summary_subject("扫描全部git分析看下成员丙最近在干嘛"));
         assert!(!unresolved_summary_subject("扫描全部git分析最近7天在干嘛"));
+        assert!(!unresolved_summary_subject("最近7天代码提交热力图"));
+        assert!(!unresolved_summary_subject("云效最近7天代码按组热力图发我下"));
+        assert!(unresolved_summary_subject("成员丙最近7天代码提交热力图"));
+    }
+    #[test]
+    fn heatmaps_rank_observed_activity_before_empty_roster_rows() {
+        let request = context("最近7天代码提交热力图");
+        let intent = Intent::parse(&request.question).unwrap();
+        let range = window(&request.question, request.at_ms).unwrap();
+        let result = answer(&request, &intent, &range, &json!({"id":"source"}), &data()).unwrap();
+        assert_eq!(result.charts[0]["rows"][0]["label"], "成员甲");
+        assert_eq!(result.charts[0]["rows"][0]["metricTotal"], 1);
+        assert_eq!(result.charts[0]["rows"][1]["metricTotal"], 0);
     }
     #[test]
     fn team_assessment_uses_last_week_and_reports_members_without_inventing_performance() {
