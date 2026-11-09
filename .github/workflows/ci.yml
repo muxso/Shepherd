@@ -95,6 +95,12 @@ jobs:
       - name: Yunxiao read-only collector contracts
         working-directory: .
         run: python3 -m unittest discover -s plugins/yunxiao/scripts -p 'test_*.py'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: install WeCom runtime dependencies
+        working-directory: .
+        run: python3 -m pip install -r plugins/wecom-bot/requirements.txt
       - name: WeCom gateway authorization contracts
         working-directory: .
         run: python3 -m unittest discover -s plugins/wecom-bot/tests -v

@@ -17,6 +17,7 @@ class Client:
 
     async def reply_stream(self, frame, stream, text, finished, **kwargs):
         self.replies.append((text, finished, kwargs))
+        return {"errcode": 0}
 
 
 class UnavailableBackend:
@@ -45,6 +46,54 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self):
         self.gateway.state.db.close()
         self.directory.cleanup()
+
+    async def test_chart_reply_is_short_keeps_images_and_preserves_full_history(self):
+        self.gateway.state.bind("group-a", "secret", "secret")
+        full = "**范围：2026-11-03 ～ 2026-11-09（上海时间，含首尾）**\n\n人员：全员。同步截至：2026-11-09T05:00:00+00:00。\n\n已采集代码提交 **376**，查询范围覆盖 34 名成员。\n\n"+"Very long details "*350+"\n\n资料来源：\n[1] [统计来源](https://example.com/activity)"
+        images = [{"msgtype": "image", "image": {"base64": "png", "md5": "digest"}}]
+        async def ask(*args): return full, images
+        self.gateway.ask = ask
+        await self.gateway.on_text(frame(question="最近7天代码提交热力图"))
+        text, finished, body = self.client.replies[-1]
+        self.assertLess(len(text.encode()), 1200)
+        self.assertIn("376", text)
+        self.assertIn("13:00", text)
+        self.assertIn("下附 1 张统计图", text)
+        self.assertEqual(body["msg_item"], images)
+        self.assertTrue(finished)
+        self.assertEqual(self.gateway.state.history("group-a", "user-a")[-1][1], full)
+
+    async def test_failed_final_ack_is_not_recorded_as_a_completed_answer(self):
+        self.gateway.state.bind("group-a", "secret", "secret")
+        original = self.client.reply_stream
+        async def reply(frame, stream, text, finished, **kwargs):
+            await original(frame, stream, text, finished, **kwargs)
+            return {"errcode": 40008} if kwargs.get("msg_item") else {"errcode": 0}
+        self.client.reply_stream = reply
+        async def ask(*args): return "统计回答", [{"msgtype": "image", "image": {"base64": "png", "md5": "digest"}}]
+        self.gateway.ask = ask
+        await self.gateway.on_text(frame())
+        self.assertEqual(self.gateway.state.history("group-a", "user-a"), [])
+        self.assertIn("未能完成", self.client.replies[-1][0])
+
+    async def test_sdk_serializes_images_inside_the_final_stream(self):
+        try:
+            from aibot import WSClient
+        except ImportError:
+            self.skipTest("runtime SDK is not installed")
+        class Transport:
+            async def send_reply(self, req_id, body, cmd):
+                self.body = body
+                return {"errcode": 0}
+        transport = Transport()
+        client = object.__new__(WSClient)
+        client._ws_manager = transport
+        self.gateway.client = client
+        images = [{"msgtype": "image", "image": {"base64": "png", "md5": "digest"}}]
+        await self.gateway.send_final(frame(), "stream", "统计回答", images)
+        self.assertEqual(transport.body["msgtype"], "stream")
+        self.assertTrue(transport.body["stream"]["finish"])
+        self.assertEqual(transport.body["stream"]["msg_item"], images)
 
     async def test_mixed_text_reaches_the_query_handler_once(self):
         self.gateway.state.bind("group-a", "secret", "secret")
