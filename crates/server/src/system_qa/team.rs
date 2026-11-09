@@ -148,11 +148,16 @@ fn role_summary(
         data["observedAt"].as_str().unwrap_or("未知"),
         if complete { "" } else { "采集覆盖待核验，不能据此判断零产出。" }
     );
-    let rows: Vec<_> = rows
+    let mut rows: Vec<_> = rows
         .into_iter()
         .map(|((label, group), values)| json!({"label":label,"group":group,"values":values}))
         .collect();
-    let chart = json!({"kind":"activity_heatmap","title":format!("{label} · 团队产出"),"metric":"已观测活动次数","dates":dates,"rows":rows,"from":from,"through":through,"coverageComplete":complete,"observedAt":data["observedAt"]});
+    let scoped: Vec<_> = raw
+        .iter()
+        .filter(|event| kinds.contains(&event["kind"].as_str().unwrap_or_default()))
+        .collect();
+    super::heatmap::expand(&mut rows, &dates, &scoped, data, role, false);
+    let chart = json!({"kind":"activity_heatmap","detailMode":role,"expanded":rows.iter().any(|row|row["cells"].is_array()),"detailNote":if rows.len()*dates.len()>6000 {"范围较大，仅显示活动次数；缩小时间或人员范围可展开每日指标。"}else{""},"title":format!("{label} · 团队产出"),"metric":"已观测活动次数","dates":dates,"rows":rows,"from":from,"through":through,"coverageComplete":complete,"observedAt":data["observedAt"]});
     Ok((
         content,
         chart,

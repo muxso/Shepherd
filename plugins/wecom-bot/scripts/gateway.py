@@ -89,7 +89,7 @@ class Gateway:
         answer, citations, event, last_update = "", [], "", 0.0
         completed = False
         charts = []
-        async with self.http.post(os.environ["SHEPHERD_URL"].rstrip("/")+"/rag/ask/stream", json=body, headers=headers) as response:
+        async with self.http.post(os.environ["SHEPHERD_URL"].rstrip("/")+"/rag/ask/stream", json=body, headers=headers, read_bufsize=4*1024*1024) as response:
             if response.status != 200:
                 raise RuntimeError("backend_unavailable")
             async for raw in response.content:

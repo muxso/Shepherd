@@ -125,3 +125,27 @@ test('pending direct authorization reuses the channel account and preserves grou
   expect(saved?.allowBinding).toBe(false)
   expect(saved?.conversations).toEqual([group, { kind: 'direct', externalId: 'user-a', projectId: 'project', enabled: true }])
 })
+
+
+test('answer heatmaps expand daily code indicators and hide zero bugs by default', async ({ page }, testInfo) => {
+  await setup(page)
+  await page.route('**/rag/ask/stream', route => {
+    const empty = { count: 0, lastTime: null, additions: null, deletions: null, requirements: 0, bugs: 0, created: 0, published: 0, testcases: 0 }
+    const chart = { kind: 'activity_heatmap', title: '成员展开热力图', metric: '已采集代码提交', detailMode: 'code', expanded: true, from: '2026-11-07', through: '2026-11-08', dates: ['2026-11-07', '2026-11-08'], rows: [{ label: '成员甲', group: '研发组', values: [2, 0], cells: [{ ...empty, count: 2, lastTime: '20:35', additions: 6191, deletions: 2150, requirements: 3 }, { ...empty, bugs: 2 }], totals: { ...empty, count: 2, requirements: 3, bugs: 2 } }] }
+    return route.fulfill({ contentType: 'text/event-stream', body: [['chart', chart], ['chunk', { delta: '已核对提交记录。' }], ['done', { grounded: true }]].map(([event, data]) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`).join('') })
+  })
+  await page.goto('/p/project/chat')
+  await page.locator('textarea:not([aria-hidden="true"])').fill('团队代码热力图')
+  await page.locator('textarea:not([aria-hidden="true"])').press('Enter')
+  const chart = page.getByRole('region', { name: '成员展开热力图' })
+  await expect(chart.getByText('20:35', { exact: true })).toBeVisible()
+  await expect(chart.getByText('+6,191 / −2,150')).toBeVisible()
+  await expect(chart.getByText('关联需求 3')).toBeVisible()
+  await expect(chart.getByText('Bug 2', { exact: true })).toBeVisible()
+  await expect(chart.getByText('Bug 0', { exact: true })).toHaveCount(0)
+  await expect(chart.getByText('周六', { exact: true })).toBeVisible()
+  await page.screenshot({ path: testInfo.outputPath('rag-expanded-heatmap.png') })
+  await chart.getByRole('button', { name: '收起格子指标' }).click()
+  await expect(chart.getByText('20:35', { exact: true })).toHaveCount(0)
+  await expect(chart.getByRole('button', { name: '展开格子指标' })).toBeVisible()
+})
