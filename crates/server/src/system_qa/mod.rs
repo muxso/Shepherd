@@ -3,6 +3,7 @@ mod activity;
 mod audit;
 mod business;
 mod devops;
+mod heatmap;
 mod team;
 use async_trait::async_trait;
 use axum::{body::Body, http::Request, Router};

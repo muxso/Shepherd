@@ -734,15 +734,16 @@ pub(super) fn answer(
             )
         })
         .collect();
-    let chart_rows: Vec<_> = rows
+    let mut chart_rows: Vec<_> = rows
         .into_iter()
         .map(|((label, group), values)| json!({"label":label,"group":group,"values":values}))
         .collect();
+    super::heatmap::expand(&mut chart_rows, &dates, &events, data, intent.role, intent.groups);
     let charts = if intent.chart {
         let title = if intent.groups { "各组活动统计" } else { "成员活动统计" };
         if intent.chart_kind == "activity_heatmap" {
             vec![
-                json!({"kind":"activity_heatmap","title":title,"metric":metric,"dates":dates,"rows":chart_rows,"from":from,"through":through,"observedAt":data["observedAt"],"coverageComplete":complete}),
+                json!({"kind":"activity_heatmap","detailMode":intent.role,"expanded":chart_rows.iter().any(|row|row["cells"].is_array()),"detailNote":if chart_rows.len()*dates.len()>6000 {"范围较大，仅显示活动次数；缩小时间或人员范围可展开每日指标。"}else{""},"title":title,"metric":metric,"dates":dates,"rows":chart_rows,"from":from,"through":through,"observedAt":data["observedAt"],"coverageComplete":complete}),
             ]
         } else {
             let mut ranked = bar_values;

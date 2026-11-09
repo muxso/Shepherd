@@ -174,6 +174,8 @@ def render_grounded_chart(spec, font_path):
         return render_grounded_bars(spec, font_path)
     if spec.get("kind") != "activity_heatmap":
         raise ValueError("unsupported_chart")
+    if spec.get("expanded") and any(row.get("cells") for row in spec.get("rows", [])):
+        return render_expanded_heatmap(spec, font_path)
     dates = spec.get("dates") or []
     rows = spec.get("rows") or []
     if not 1 <= len(dates) <= 366 or len(rows) > 500:
@@ -216,6 +218,89 @@ def render_grounded_chart(spec, font_path):
     if len(raw) > 2_000_000:
         raise ValueError("chart_exceeds_image_limit")
     return {"msgtype": "image", "image": {"base64": base64.b64encode(raw).decode(), "md5": hashlib.md5(raw, usedforsecurity=False).hexdigest()}}
+
+
+def render_expanded_heatmap(spec, font_path):
+    from PIL import Image, ImageDraw, ImageFont
+    from datetime import date
+    import math
+    dates, rows = spec.get("dates") or [], spec.get("rows") or []
+    if not 1 <= len(dates) <= 366 or len(rows) > 500:
+        raise ValueError("invalid_chart_size")
+    shown = rows[:60]
+    width = min(2800, max(1500, 380+len(dates)*220))
+    row_height = 78
+    height = max(350, 250+len(shown)*row_height)
+    picture = Image.new("RGB", (width, height), "#F4F7F6")
+    draw = ImageDraw.Draw(picture)
+    font = lambda size: ImageFont.truetype(font_path, size)
+    draw.rounded_rectangle((20, 20, width-20, height-20), radius=20, fill="white")
+    draw.text((45, 38), str(spec.get("title") or "成员产出")[:55], font=font(29), fill="#274B44")
+    draw.text((45, 84), f"{spec.get('from', '')} — {spec.get('through', '')} · 上海时间 · 展开指标", font=font(18), fill="#64746F")
+    left_edge, right_edge = 220, width-195
+    cell_width = (right_edge-left_edge)/len(dates)
+    mode = spec.get("detailMode", "code")
+    headers = ["提交", "需求", "Bug"] if mode == "code" else ["活动", "新建", "发布"] if mode == "product" else ["活动", "用例", "Bug"]
+    for i, label in enumerate(headers):
+        draw.text((right_edge+12+i*51, 126), label, font=font(16), fill="#73807C")
+    for column, day in enumerate(dates):
+        left = left_edge+column*cell_width
+        weekday = date.fromisoformat(day).weekday()
+        weekend = weekday >= 5
+        if weekend: draw.rounded_rectangle((left, 114, left+cell_width-4, 163), radius=4, fill="#F4EEE7")
+        if cell_width >= 40:
+            draw.text((left+8, 116), day[5:], font=font(17), fill="#A46B36" if weekend else "#64746F")
+            draw.text((left+8, 140), "周"+"一二三四五六日"[weekday], font=font(15), fill="#A46B36" if weekend else "#73807C")
+    maximum = max((v for row in shown for v in row.get("values", []) if isinstance(v, (int, float)) and math.isfinite(v) and v > 0), default=1)
+    def centered(text, left, top, size, color="#263F39"):
+        face=font(size);box=draw.textbbox((0,0),text,font=face)
+        draw.text((left+(cell_width-(box[2]-box[0]))/2,top),text,font=face,fill=color)
+    def number(value): return "—" if value is None else f"{int(value):,}"
+    for index, row in enumerate(shown):
+        top=174+index*row_height
+        draw.text((45,top+20),str(row.get("label") or "未关联账号")[:12],font=font(21),fill="#263F39")
+        for column, day in enumerate(dates):
+            left=left_edge+column*cell_width
+            value=(row.get("values") or [])[column] if column<len(row.get("values") or []) else 0
+            value=value if isinstance(value,(int,float)) and math.isfinite(value) and value>0 else 0
+            factor=.12+.55*math.sqrt(value/maximum) if value else 0
+            shade=tuple(round(245*(1-factor)+green*factor) for green in (72,137,119))
+            draw.rounded_rectangle((left,top,left+max(1,cell_width-4),top+row_height-5),radius=4,fill=shade)
+            cell=(row.get("cells") or [])[column] if column<len(row.get("cells") or []) else {}
+            if cell_width < 70:
+                if value: centered(str(int(value)),left,top+20,16)
+                continue
+            if not cell.get("count") and not cell.get("bugs"):
+                centered("·",left,top+20,20,"#A0AAA6");continue
+            heading=cell.get("lastTime") or "—"
+            if cell.get("bugs"):
+                badge="Bug "+str(cell["bugs"]);face=font(20);small=font(15)
+                tw=draw.textbbox((0,0),heading,font=face)[2];bw=draw.textbbox((0,0),badge,font=small)[2]+8
+                start=left+(cell_width-tw-bw-8)/2
+                draw.text((start,top+5),heading,font=face,fill="#263F39")
+                draw.rounded_rectangle((start+tw+7,top+7,start+tw+7+bw,top+29),radius=3,fill="#F4E8D9")
+                draw.text((start+tw+11,top+8),badge,font=small,fill="#A46B36")
+            else: centered(heading,left,top+5,20)
+            if mode == "code":
+                if cell.get("count"):
+                    lines="行数未知" if cell.get("additions") is None and cell.get("deletions") is None else "+"+number(cell.get("additions"))+" / −"+number(cell.get("deletions"))
+                    if cell.get("lineStatsIncomplete"): lines+="*"
+                    centered(lines,left,top+31,15)
+                if cell.get("requirements"): centered("关联需求 "+str(cell["requirements"]),left,top+52,15)
+            else:
+                centered(str(cell.get("count",0))+" 次活动",left,top+31,16)
+                label=("新建 "+str(cell.get("created",0))+" · 发布 "+str(cell.get("published",0))) if mode=="product" else "用例 "+str(cell.get("testcases",0))
+                centered(label,left,top+52,15)
+        totals=row.get("totals") or {}
+        values=[totals.get("count"),totals.get("requirements"),totals.get("bugs")] if mode=="code" else [totals.get("count"),totals.get("created"),totals.get("published")] if mode=="product" else [totals.get("count"),totals.get("testcases"),totals.get("bugs")]
+        for i,value in enumerate(values): draw.text((right_edge+14+i*51,top+25),str(value) if value else "—",font=font(18),fill="#A46B36" if i==2 and mode!="product" and value else "#64746F")
+    note="需求与 Bug 期间分别去重 · * 行数不全，仅为已知下限" if mode=="code" else "新建与发布分别计次，同一需求可能同时出现" if mode=="product" else "用例按活动计数，Bug 期间去重"
+    footer=f"已采集记录 · 展示 {len(shown)} / {len(rows)} 行 · {note}"
+    if spec.get("coverageComplete") is False: footer+=" · 采集覆盖待核验"
+    draw.text((45,height-58),footer,font=font(17),fill="#73807C")
+    output=io.BytesIO();picture.save(output,format="PNG",optimize=True);raw=output.getvalue()
+    if len(raw)>2_000_000: raise ValueError("chart_exceeds_image_limit")
+    return {"msgtype":"image","image":{"base64":base64.b64encode(raw).decode(),"md5":hashlib.md5(raw,usedforsecurity=False).hexdigest()}}
 
 
 def render_grounded_bars(spec, font_path):
