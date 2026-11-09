@@ -187,6 +187,8 @@ pub struct ListQuery {
     pub days: Option<i64>,
     pub group: Option<String>,
     pub delayed_only: Option<bool>,
+    pub owner: Option<String>,
+    pub include_owners: Option<bool>,
     pub status: Option<String>,
     pub period: Option<bool>,
 }

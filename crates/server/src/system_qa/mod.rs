@@ -266,13 +266,30 @@ mod tests {
             serde_json::json!({"from":"2026-11-02","through":"2026-11-08","members":[{"name":"成员甲","group":"研发组"}],"events":[{"kind":"commit","actor":"成员甲","group":"研发组","date":"2026-11-04","at":"2026-11-04T18:00:00+08:00"}],"coverage":{"complete":true}}),
         )
     }
+    async fn overdue_records(
+        _user: AuthUser,
+        axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+    ) -> Json<Value> {
+        assert_eq!(q.get("delayedOnly").map(String::as_str), Some("true"));
+        if q.contains_key("includeOwners") {
+            Json(
+                serde_json::json!({"total":2,"items":[{"owner":"成员乙"}],"ownerOptions":["成员甲","成员乙"]}),
+            )
+        } else {
+            assert_eq!(q.get("owner").map(String::as_str), Some("成员甲"));
+            Json(
+                serde_json::json!({"total":1,"items":[{"owner":"成员甲","externalId":"requirement-a","title":"Order correction","serial":"REQ-1","due":"2026-11-01","status":"开发中"}]}),
+            )
+        }
+    }
     async fn setup(permission: &str) -> (SystemQueries, String, QueryContext) {
         let sessions: Sessions = Arc::new(webauth::testing::InMemorySessionStore::new());
-        let permissions = PermissionSet::from_raw([permission]).expect("permissions");
+        let permissions = PermissionSet::from_raw(permission.split(',')).expect("permissions");
         let token = sessions.create("user", permissions.clone(), 3600).await.expect("session");
         let routes = Router::new()
             .route("/api/devops/sources", get(sources))
             .route("/api/devops/sources/source/team-activity", get(activity))
+            .route("/api/devops/sources/source/records", get(overdue_records))
             .with_state(sessions);
         let context = QueryContext {
             user: AuthUser { user_id: "user".into(), permissions },
@@ -282,6 +299,20 @@ mod tests {
             at_ms: 1794146400000,
         };
         (SystemQueries::new(routes), format!("Bearer {token}"), context)
+    }
+    #[tokio::test]
+    async fn overdue_person_questions_use_authenticated_exact_owner_filters_without_a_planner() {
+        let (provider, token, mut context) = setup("PROJECT:READ,REQUIREMENT:READ").await;
+        context.question = "成员甲有哪些任务延期".into();
+        let answer = provider.answer(&context, &token).await.unwrap().unwrap();
+        assert_eq!(answer.scope["evidence"]["total"], 1);
+        assert_eq!(answer.scope["filters"]["owner"], "成员甲");
+        assert!(answer.content.contains("REQ-1 Order correction"));
+        assert!(answer.content.contains("排除待发布"));
+        assert!(!answer.content.contains("成员乙"));
+        assert!(answer.sources[1]["url"].as_str().unwrap().contains("reference=requirement-a"));
+        context.question = "成员丙有哪些任务延期".into();
+        assert!(provider.answer(&context, &token).await.is_err());
     }
     #[tokio::test]
     async fn statistics_reuse_authenticated_routes_and_do_not_call_document_search() {
