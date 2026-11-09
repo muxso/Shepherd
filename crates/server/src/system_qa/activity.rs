@@ -61,7 +61,7 @@ impl Intent {
             .iter()
             .any(|word| q.contains(word));
         let chart =
-            ["热力图", "统计图", "趋势图", "柱状图", "图表"].iter().any(|word| q.contains(word));
+            ["热力", "统计图", "趋势图", "柱状图", "图表"].iter().any(|word| q.contains(word));
         let summary = [
             "干嘛",
             "干吗",
@@ -124,7 +124,7 @@ impl Intent {
         .iter()
         .any(|word| q.contains(word));
         let activity_chart = chart
-            && ["团队", "成员", "人员", "按组", "每个组", "热力图", "代码", "提交"]
+            && ["团队", "成员", "人员", "按组", "每个组", "热力", "代码", "提交"]
                 .iter()
                 .any(|word| q.contains(word));
         if (!source && !assessment) || (!activity_chart && !activity) {
@@ -161,7 +161,7 @@ impl Intent {
             } else {
                 "events"
             },
-            chart_kind: if q.contains("热力图") || summary || team_output {
+            chart_kind: if q.contains("热力") || summary || team_output {
                 "activity_heatmap"
             } else {
                 "bar"
@@ -276,6 +276,7 @@ fn unresolved_summary_subject(question: &str) -> bool {
         "帮我",
         "请",
         "热力图",
+        "热力",
         "统计图",
         "趋势图",
         "柱状图",
@@ -875,6 +876,8 @@ mod tests {
         assert!(unresolved_summary_subject("扫描全部git分析看下成员丙最近在干嘛"));
         assert!(!unresolved_summary_subject("扫描全部git分析最近7天在干嘛"));
         assert!(!unresolved_summary_subject("最近7天代码提交热力图"));
+        assert!(!unresolved_summary_subject("最近7天代码提交热力"));
+        assert!(unresolved_summary_subject("成员丙最近7天代码提交热力"));
         assert!(!unresolved_summary_subject("云效最近7天代码按组热力图发我下"));
         assert!(unresolved_summary_subject("成员丙最近7天代码提交热力图"));
     }

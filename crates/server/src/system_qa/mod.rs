@@ -336,10 +336,15 @@ mod tests {
             assert!(answer.content.contains("默认最近 7 天"));
             assert!(answer.content.contains("并未实时扫描"));
         }
-        context.question = "最近7天代码提交热力图".into();
-        let chart = provider.answer(&context, &token).await.unwrap().unwrap();
-        assert_eq!(chart.scope["returned"], 1);
-        assert_eq!(chart.charts[0]["expanded"], true);
+        for question in ["最近7天代码提交热力图", "最近7天代码提交热力", "最近 7 天代码提交热力"]
+        {
+            context.question = question.into();
+            let chart = provider.answer(&context, &token).await.unwrap().unwrap();
+            assert_eq!(chart.scope["returned"], 1);
+            assert_eq!(chart.charts[0]["expanded"], true);
+        }
+        context.question = "成员丙最近7天代码提交热力".into();
+        assert!(provider.answer(&context, &token).await.is_err());
         context.question = "扫描全部git分析成员丙最近在干嘛".into();
         assert!(provider.answer(&context, &token).await.is_err());
     }
