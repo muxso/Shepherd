@@ -13,6 +13,7 @@ pub(super) struct Intent {
     chart_kind: &'static str,
     chart: bool,
     groups: bool,
+    summary: bool,
 }
 impl Intent {
     pub fn audit() -> Self {
@@ -23,13 +24,36 @@ impl Intent {
             chart_kind: "bar",
             chart: false,
             groups: false,
+            summary: false,
         }
     }
     pub fn parse(question: &str) -> Option<Self> {
         let q = question.to_lowercase();
-        if ["怎么实现", "如何实现", "原理", "怎么配置", "如何配置", "如何安装"]
-            .iter()
-            .any(|word| q.contains(word))
+        if rag::grounding::needs_change_proof(question) {
+            return None;
+        }
+        if [
+            "怎么实现",
+            "如何实现",
+            "原理",
+            "怎么配置",
+            "如何配置",
+            "如何安装",
+            "是什么",
+            "如何使用",
+            "怎么使用",
+            "怎么工作",
+            "如何工作",
+            "教程",
+            "用法",
+            "怎么查看",
+            "如何查看",
+            "命令",
+            "如何查询",
+            "怎么查询",
+        ]
+        .iter()
+        .any(|word| q.contains(word))
         {
             return None;
         }
@@ -38,10 +62,30 @@ impl Intent {
             .any(|word| q.contains(word));
         let chart =
             ["热力图", "统计图", "趋势图", "柱状图", "图表"].iter().any(|word| q.contains(word));
-        let activity = ((q.contains("git") || q.contains("代码") || q.contains("仓库"))
-            && ["多少", "数量", "几次", "排行", "最大", "最多"]
-                .iter()
-                .any(|word| q.contains(word)))
+        let summary = [
+            "干嘛",
+            "干吗",
+            "在忙",
+            "忙什么",
+            "忙啥",
+            "做什么",
+            "工作情况",
+            "工作内容",
+            "工作总结",
+        ]
+        .iter()
+        .any(|word| q.contains(word))
+            || (["git", "代码", "仓库"].iter().any(|word| q.contains(word))
+                && ["分析", "梳理", "总结", "扫描", "近期", "最近", "提交历史"]
+                    .iter()
+                    .any(|word| q.contains(word)));
+        let team_output = (q.contains("团队") || q.contains("全员")) && q.contains("产出");
+        let activity = summary
+            || team_output
+            || ((q.contains("git") || q.contains("代码") || q.contains("仓库"))
+                && ["多少", "数量", "几次", "排行", "最大", "最多"]
+                    .iter()
+                    .any(|word| q.contains(word)))
             || [
                 "干啥",
                 "干了",
@@ -59,10 +103,26 @@ impl Intent {
             ]
             .iter()
             .any(|word| q.contains(word));
-        let assessment =
-            ["摸鱼", "偷懒", "绩效", "干啥", "干了", "做了", "干什么", "工作量", "有没有产出"]
-                .iter()
-                .any(|word| q.contains(word));
+        let assessment = [
+            "摸鱼",
+            "偷懒",
+            "绩效",
+            "干啥",
+            "干了",
+            "做了",
+            "干什么",
+            "工作量",
+            "有没有产出",
+            "最近在干嘛",
+            "近期在干嘛",
+            "本周在干嘛",
+            "上周在干嘛",
+            "最近在干吗",
+            "工作情况",
+            "工作内容",
+        ]
+        .iter()
+        .any(|word| q.contains(word));
         let activity_chart = chart
             && ["团队", "成员", "人员", "按组", "每个组", "热力图", "代码", "提交"]
                 .iter()
@@ -101,8 +161,13 @@ impl Intent {
             } else {
                 "events"
             },
-            chart_kind: if q.contains("热力图") { "activity_heatmap" } else { "bar" },
-            chart,
+            chart_kind: if q.contains("热力图") || summary || team_output {
+                "activity_heatmap"
+            } else {
+                "bar"
+            },
+            chart: chart || team_output || (summary && role == "code"),
+            summary: summary && role == "code",
             groups: ["按组", "每组", "各组", "每个组", "分组"].iter().any(|word| q.contains(word)),
         })
     }
@@ -183,6 +248,63 @@ fn field<'a>(row: &'a Value, key: &str) -> &'a str {
 }
 fn clean(value: &str) -> String {
     value.replace(['\n', '\r', '[', ']', '`', '<', '>'], " ").chars().take(160).collect()
+}
+
+fn unresolved_summary_subject(question: &str) -> bool {
+    let mut remaining = question.to_lowercase();
+    for term in [
+        "扫描全部",
+        "提交情况",
+        "提交记录",
+        "提交历史",
+        "工作总结",
+        "工作情况",
+        "工作内容",
+        "做了什么",
+        "忙什么",
+        "在干嘛",
+        "在干吗",
+        "干什么",
+        "做什么",
+        "干嘛",
+        "干吗",
+        "干啥",
+        "在忙",
+        "忙啥",
+        "git",
+        "分析",
+        "梳理",
+        "总结",
+        "扫描",
+        "看看",
+        "看下",
+        "查看",
+        "统计",
+        "最近",
+        "近期",
+        "本周",
+        "上周",
+        "今天",
+        "昨天",
+        "过去",
+        "代码",
+        "仓库",
+        "提交",
+        "活动",
+        "工作",
+        "全部",
+        "所有",
+        "项目",
+        "一下",
+        "哪些",
+        "情况",
+        "的",
+        "在",
+        "近",
+    ] {
+        remaining = remaining.replace(term, "");
+    }
+    remaining.chars().any(|c| c.is_alphabetic() && !['年', '月', '日', '天'].contains(&c))
 }
 
 #[derive(Default)]
@@ -323,6 +445,16 @@ pub(super) fn answer(
         return Err(RagError::Backend(
             "当前统计名单未识别所指成员，请提供姓名或已关联账号；不能将未识别人员判为无提交。"
                 .into(),
+        ));
+    }
+    if intent.summary
+        && selected.is_empty()
+        && known_groups.is_empty()
+        && !cohort
+        && unresolved_summary_subject(&context.question)
+    {
+        return Err(RagError::Backend(
+            "当前统计名单未识别所指成员，请提供姓名或已关联账号；未扩大到全员查询。".into(),
         ));
     }
     let events: Vec<_> = raw
@@ -504,6 +636,44 @@ pub(super) fn answer(
         events.len() as u64
     };
     let mut content=format!("**范围：{from} ～ {through}（上海时间，含首尾）**\n\n人员：{person}。同步截至：{}。\n\n{metric} **{value_total}**，查询范围覆盖 {} {}。",clean(field(data,"observedAt")),rows.len(),if intent.groups {"个分组"} else {"名成员或原始账号"});
+    if intent.summary {
+        content.push_str("\n\n本次读取已采集的 Git 活动，并未实时扫描所有远端仓库和分支。未指定日期时默认最近 7 天；以上起止日期是本次实际查询范围。");
+        let active_days =
+            events.iter().map(|row| field(row, "date")).collect::<BTreeSet<_>>().len();
+        let repos: BTreeSet<_> =
+            events.iter().map(|row| field(row, "repo")).filter(|repo| !repo.is_empty()).collect();
+        let requirements: BTreeMap<_, _> = events
+            .iter()
+            .flat_map(|row| row["requirements"].as_array().into_iter().flatten())
+            .filter(|row| !field(row, "externalId").is_empty())
+            .map(|row| (field(row, "externalId"), row))
+            .collect();
+        let additions: u64 = events.iter().filter_map(|row| row["additions"].as_u64()).sum();
+        let deletions: u64 = events.iter().filter_map(|row| row["deletions"].as_u64()).sum();
+        let missing = events
+            .iter()
+            .filter(|row| {
+                row["additions"].as_u64().is_none() || row["deletions"].as_u64().is_none()
+            })
+            .count();
+        content.push_str(&format!("\n\n**已观测工作线索**：{} 次提交，{active_days} 个活跃日，{} 个仓库，{} 项明确关联需求。\n\n已知新增 +{additions} / 删除 -{deletions} 行{}。",events.len(),repos.len(),requirements.len(),if missing>0 {"（部分行数未采集，仅为已知下限）"} else {""}));
+        if !repos.is_empty() {
+            content.push_str(&format!(
+                "\n\n涉及仓库：{}。",
+                repos.iter().take(12).map(|repo| clean(repo)).collect::<Vec<_>>().join("、")
+            ));
+        }
+        for row in requirements.values().take(12) {
+            let label = clean(&format!("{} {}", field(row, "serial"), field(row, "title")));
+            let location = row["url"]
+                .as_str()
+                .and_then(rag::references::safe_url)
+                .map(|url| format!("[{label}]({url})"))
+                .unwrap_or(label);
+            content.push_str(&format!("\n- 关联需求：{location}"));
+        }
+        content.push_str("\n\n以下内容来自实际提交标题与关联信息；不据此推断需求已交付、测试已通过或生产已发布。");
+    }
     if unique_metric {
         content.push_str(
             "\n\n同一仓库、需求或缺陷可关联多名成员或分组，图中各行不能直接相加作为全局去重总数。",
@@ -529,7 +699,8 @@ pub(super) fn answer(
     if intent.chart {
         content
             .push_str("\n\n热力图由上述实际查询记录按自然日汇总；空白仅表示该范围未观测到记录。");
-    } else {
+    }
+    if !intent.chart || intent.summary {
         let mut latest = events.clone();
         latest.sort_by_key(|event| std::cmp::Reverse(field(event, "at")));
         for event in latest.iter().take(12) {
@@ -588,9 +759,21 @@ pub(super) fn answer(
         rag::references::component(field(source, "id")),
         intent.role
     );
-    let sources = vec![
+    let mut sources = vec![
         json!({"title":"团队产出 · 原始统计页面","url":url,"content_preview":format!("{from} ～ {through}；{metric} {value_total}"),"occurred_at":through,"source_type":"live_statistics"}),
     ];
+    if intent.summary {
+        let mut latest = events.clone();
+        latest.sort_by_key(|event| std::cmp::Reverse(field(event, "at")));
+        let mut urls = BTreeSet::new();
+        for event in latest.into_iter().take(12) {
+            if let Some(url) = event["url"].as_str().and_then(rag::references::safe_url) {
+                if urls.insert(url.clone()) {
+                    sources.push(json!({"title":format!("{} · {}",field(event,"repo"),clean(field(event,"title"))),"url":url,"occurred_at":event["at"],"source_type":"git_commit"}));
+                }
+            }
+        }
+    }
     Ok(GroundedAnswer {
         content,
         sources,
@@ -619,6 +802,26 @@ mod tests {
         json!({"from":"2026-11-02","through":"2026-11-08","observedAt":"2026-11-08T20:00:00+08:00","coverage":{"complete":false},
             "members":[{"name":"成员甲","group":"研发一组"},{"name":"成员乙","group":"产品组"}],
             "events":[{"kind":"commit","actor":"成员甲","authorRaw":"account-a","group":"研发一组","date":"2026-11-04","at":"2026-11-04T18:00:00+08:00","repo":"service-a","sha":"abc123","title":"订单修正"}]})
+    }
+    #[test]
+    fn natural_git_summaries_use_live_activity_and_preserve_knowledge_queries() {
+        for question in [
+            "扫描全部 git 分析 看下成员甲最近在干嘛",
+            "云效和git看看成员甲近期在忙啥",
+            "Git 分析成员甲最近做什么",
+            "成员甲最近在干嘛",
+        ] {
+            assert!(Intent::parse(question).expect("live intent").summary, "{question}");
+        }
+        for question in [
+            "git log 命令如何查看最近提交记录",
+            "扫描全部git分析谁升级了sample-json版本",
+            "今天做什么饭",
+        ] {
+            assert!(Intent::parse(question).is_none(), "{question}");
+        }
+        assert!(unresolved_summary_subject("扫描全部git分析看下成员丙最近在干嘛"));
+        assert!(!unresolved_summary_subject("扫描全部git分析最近7天在干嘛"));
     }
     #[test]
     fn team_assessment_uses_last_week_and_reports_members_without_inventing_performance() {
