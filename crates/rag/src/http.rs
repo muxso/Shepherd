@@ -106,6 +106,23 @@ pub fn router_with_queries(
         .with_state(RagState { store, embedder, chat, sessions, config, pool, changes, queries })
 }
 
+#[derive(Debug)]
+enum HttpError {
+    Text(StatusCode, String),
+    Json(StatusCode, &'static str),
+}
+
+impl IntoResponse for HttpError {
+    fn into_response(self) -> Response {
+        match self {
+            Self::Text(status, message) => (status, message).into_response(),
+            Self::Json(status, message) => {
+                (status, Json(serde_json::json!({ "error": message }))).into_response()
+            }
+        }
+    }
+}
+
 // Directory read permission is part of ordinary users' baseline; it must not bypass KB ACLs.
 fn is_rag_admin(user: &AuthUser) -> bool {
     user.can("SYSTEM_USER", "UPDATE")
@@ -117,7 +134,7 @@ async fn require_project_member(
     user: &AuthUser,
     pool: &sqlx::PgPool,
     project_id: &str,
-) -> std::result::Result<(), Response> {
+) -> Result<(), HttpError> {
     if is_rag_admin(user) {
         return Ok(());
     }
@@ -128,11 +145,12 @@ async fn require_project_member(
     .bind(&user.user_id)
     .fetch_one(pool)
     .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response())?;
+    .map_err(|e| HttpError::Text(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     if !is_member {
-        return Err(
-            (StatusCode::FORBIDDEN, "permission denied: not a project member").into_response()
-        );
+        return Err(HttpError::Text(
+            StatusCode::FORBIDDEN,
+            "permission denied: not a project member".into(),
+        ));
     }
     Ok(())
 }
@@ -190,11 +208,12 @@ async fn authorize_project(
     pool: &sqlx::PgPool,
     project_id: &str,
     action: &str,
-) -> std::result::Result<(), Response> {
+) -> Result<(), HttpError> {
     if !user.can("RAG", action) {
-        return Err(
-            (StatusCode::FORBIDDEN, format!("permission denied: RAG:{action}")).into_response()
-        );
+        return Err(HttpError::Text(
+            StatusCode::FORBIDDEN,
+            format!("permission denied: RAG:{action}"),
+        ));
     }
     require_project_member(user, pool, project_id).await
 }
@@ -427,7 +446,7 @@ async fn ingest_document(
         return (StatusCode::BAD_REQUEST, "projectId and text are required").into_response();
     }
     if let Err(resp) = authorize_project(&user, &st.pool, &b.project_id, "ADD").await {
-        return resp;
+        return resp.into_response();
     }
     if b.source_type.as_deref() == Some("onboarding") {
         return (StatusCode::BAD_REQUEST, "publish maintained knowledge through /rag/onboarding")
@@ -500,7 +519,7 @@ async fn reindex_embeddings(
     match b.project_id.as_deref() {
         Some(pid) => {
             if let Err(resp) = authorize_project(&user, &st.pool, pid, "UPDATE").await {
-                return resp;
+                return resp.into_response();
             }
         }
         None => {
@@ -545,7 +564,7 @@ async fn submit_feedback(
     Json(b): Json<FeedbackBody>,
 ) -> Response {
     if let Err(resp) = authorize_project(&user, &st.pool, &b.project_id, "READ").await {
-        return resp;
+        return resp.into_response();
     }
     let vote: i16 = match b.vote.as_str() {
         "up" => 1,
@@ -587,7 +606,7 @@ async fn kb_stats(
     Query(q): Query<ListDocsQuery>,
 ) -> Response {
     if let Err(resp) = authorize_project(&user, &st.pool, &q.project_id, "READ").await {
-        return resp;
+        return resp.into_response();
     }
     let a = load_audience(&user, &st.pool).await;
     let vis =
@@ -635,7 +654,7 @@ async fn delete_document(
         return StatusCode::NO_CONTENT.into_response(); // already gone — idempotent
     };
     if let Err(resp) = authorize_project(&user, &st.pool, &project_id, "DELETE").await {
-        return resp;
+        return resp.into_response();
     }
     match st.store.delete_document(&id).await {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
@@ -671,7 +690,7 @@ async fn list_documents(
     Query(q): Query<ListDocsQuery>,
 ) -> Response {
     if let Err(resp) = authorize_project(&user, &st.pool, &q.project_id, "READ").await {
-        return resp;
+        return resp.into_response();
     }
     let audience = load_audience(&user, &st.pool).await;
     let page = q.page.unwrap_or(1).max(1);
@@ -752,7 +771,7 @@ async fn update_document_audience(
         return (StatusCode::NOT_FOUND, "document not found").into_response();
     };
     if let Err(resp) = authorize_project(&user, &st.pool, &project_id, "UPDATE").await {
-        return resp;
+        return resp.into_response();
     }
     let r = sqlx::query(
         "UPDATE ms_rag_document SET visibility_groups = $1, updated_at = $2 WHERE id = $3",
@@ -946,7 +965,7 @@ async fn evaluate_answer(
     Json(b): Json<EvalBody>,
 ) -> Response {
     if let Err(resp) = authorize_project(&user, &st.pool, &b.project_id, "READ").await {
-        return resp;
+        return resp.into_response();
     }
     let audience = load_audience(&user, &st.pool).await;
     match crate::application::evaluate(
@@ -994,7 +1013,7 @@ async fn review_requirement(
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
     if let Err(resp) = require_project_member(&user, &st.pool, &b.project_id).await {
-        return resp;
+        return resp.into_response();
     }
     let audience = load_audience(&user, &st.pool).await;
     let (top_k, rerank) = {
@@ -1030,7 +1049,7 @@ async fn ask_stream(
     Json(b): Json<AskBody>,
 ) -> Response {
     if let Err(resp) = authorize_project(&user, &st.pool, &b.project_id, "READ").await {
-        return resp;
+        return resp.into_response();
     }
     let audience = load_audience(&user, &st.pool).await;
     let authorization = headers

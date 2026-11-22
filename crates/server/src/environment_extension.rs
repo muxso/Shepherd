@@ -262,8 +262,8 @@ impl ExecutionResolver {
         &self,
         user: AuthUser,
         environment: &str,
-    ) -> Result<api_runner::HostOverrides, Response> {
-        self.resolve_hosts(user, environment).await.map_err(IntoResponse::into_response)
+    ) -> Result<api_runner::HostOverrides, Box<Response>> {
+        self.resolve_hosts(user, environment).await.map_err(|error| Box::new(error.into_response()))
     }
     pub async fn prepare(
         &self,
@@ -271,10 +271,10 @@ impl ExecutionResolver {
         environment: Option<&str>,
         variables: BTreeMap<String, String>,
         processors: &[api_runner::Processor],
-    ) -> Result<api_runner::PreparedVariables, Response> {
+    ) -> Result<api_runner::PreparedVariables, Box<Response>> {
         self.prepare_inner(user, environment, variables, processors)
             .await
-            .map_err(IntoResponse::into_response)
+            .map_err(|error| Box::new(error.into_response()))
     }
     async fn prepare_inner(
         &self,

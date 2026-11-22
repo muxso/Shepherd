@@ -71,7 +71,7 @@ mod tests {
     impl RequestExecutor for EveryNthFails {
         async fn execute(&self) -> bool {
             let i = self.calls.fetch_add(1, Ordering::SeqCst) + 1;
-            i % self.n != 0
+            !i.is_multiple_of(self.n)
         }
     }
 

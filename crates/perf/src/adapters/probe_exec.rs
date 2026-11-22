@@ -42,7 +42,7 @@ mod tests {
         }
         async fn run(&self, _req: &ProbeRequest) -> RawProbe {
             let i = self.calls.fetch_add(1, Ordering::SeqCst) + 1;
-            let status = if i % self.n == 0 { 500 } else { 200 };
+            let status = if i.is_multiple_of(self.n) { 500 } else { 200 };
             RawProbe {
                 transport_ok: true,
                 status: Some(status),

@@ -1,4 +1,4 @@
-use super::{authorize_project, load_audience, RagState};
+use super::{authorize_project, load_audience, HttpError, RagState};
 use crate::{
     domain::{Audience, Hit},
     impact_review::{Evidence, Opinion},
@@ -24,8 +24,8 @@ pub(super) fn routes() -> Router<RagState> {
         .route("/rag/impact-reviews/{id}/actions", get(actions).post(create_action))
         .route("/rag/review-actions/{id}", axum::routing::put(update_action))
 }
-fn error(text: &str, code: StatusCode) -> Response {
-    (code, Json(json!({"error":text}))).into_response()
+fn error(text: &'static str, code: StatusCode) -> Response {
+    HttpError::Json(code, text).into_response()
 }
 fn text<'a>(v: &'a Value, key: &str) -> &'a str {
     v.get(key).and_then(Value::as_str).unwrap_or("")
@@ -52,9 +52,9 @@ struct Start {
 struct Project {
     project_id: String,
 }
-async fn gate(u: &AuthUser, s: &RagState, project: &str) -> Result<(), Response> {
+async fn gate(u: &AuthUser, s: &RagState, project: &str) -> Result<(), HttpError> {
     if !u.can("REQUIREMENT", "READ") {
-        return Err(error("permission denied", StatusCode::FORBIDDEN));
+        return Err(HttpError::Json(StatusCode::FORBIDDEN, "permission denied"));
     }
     authorize_project(u, &s.pool, project, "READ").await
 }
@@ -63,8 +63,8 @@ async fn requirement(
     project: &str,
     id: &str,
     version: Option<i32>,
-) -> Result<Value, Response> {
-    sqlx::query_scalar("SELECT jsonb_build_object('id',r.id,'title',r.title,'status',r.status,'version',v.version,'baselineVersion',r.baseline_version,'description',v.description,'acceptanceCriteria',v.acceptance_criteria,'sourceId',COALESCE(o.source_id,to_jsonb(r)->>'external_source_id'),'externalId',COALESCE(o.external_id,to_jsonb(r)->>'external_id')) FROM ms_requirement r JOIN ms_requirement_version v ON v.requirement_id=r.id LEFT JOIN ms_test_asset_origin o ON o.kind='requirement' AND o.native_id=r.id AND o.project_id=r.project_id WHERE r.id=$1 AND r.project_id=$2 AND NOT r.deleted AND ($3::int IS NULL OR v.version=$3) ORDER BY v.version DESC LIMIT 1").bind(id).bind(project).bind(version).fetch_optional(&s.pool).await.map_err(|_|error("requirement unavailable",StatusCode::INTERNAL_SERVER_ERROR))?.ok_or_else(||error("requirement version not found",StatusCode::NOT_FOUND))
+) -> Result<Value, HttpError> {
+    sqlx::query_scalar("SELECT jsonb_build_object('id',r.id,'title',r.title,'status',r.status,'version',v.version,'baselineVersion',r.baseline_version,'description',v.description,'acceptanceCriteria',v.acceptance_criteria,'sourceId',COALESCE(o.source_id,to_jsonb(r)->>'external_source_id'),'externalId',COALESCE(o.external_id,to_jsonb(r)->>'external_id')) FROM ms_requirement r JOIN ms_requirement_version v ON v.requirement_id=r.id LEFT JOIN ms_test_asset_origin o ON o.kind='requirement' AND o.native_id=r.id AND o.project_id=r.project_id WHERE r.id=$1 AND r.project_id=$2 AND NOT r.deleted AND ($3::int IS NULL OR v.version=$3) ORDER BY v.version DESC LIMIT 1").bind(id).bind(project).bind(version).fetch_optional(&s.pool).await.map_err(|_|HttpError::Json(StatusCode::INTERNAL_SERVER_ERROR, "requirement unavailable"))?.ok_or(HttpError::Json(StatusCode::NOT_FOUND, "requirement version not found"))
 }
 async fn create(
     u: AuthUser,
@@ -73,7 +73,7 @@ async fn create(
     Json(b): Json<Start>,
 ) -> Response {
     if let Err(r) = gate(&u, &s, &b.project_id).await {
-        return r;
+        return r.into_response();
     }
     if b.service_ids.len() > 30
         || b.service_ids.iter().collect::<BTreeSet<_>>().len() != b.service_ids.len()
@@ -82,7 +82,7 @@ async fn create(
     }
     let req = match requirement(&s, &b.project_id, &id, b.version).await {
         Ok(r) => r,
-        Err(r) => return r,
+        Err(r) => return r.into_response(),
     };
     if text(&req, "description").trim().is_empty() {
         return error("requirement has no description to review", StatusCode::BAD_REQUEST);
@@ -149,10 +149,10 @@ async fn list(
     Query(q): Query<Project>,
 ) -> Response {
     if let Err(r) = gate(&u, &s, &q.project_id).await {
-        return r;
+        return r.into_response();
     }
     if let Err(r) = requirement(&s, &q.project_id, &id, None).await {
-        return r;
+        return r.into_response();
     }
     let _=sqlx::query("UPDATE ms_requirement_impact_review SET state='FAILED',error='评审进程已中断，请重新发起',finished_at=now() WHERE project_id=$1 AND requirement_id=$2 AND state IN ('QUEUED','RUNNING') AND heartbeat_at<now()-interval '90 seconds'").bind(&q.project_id).bind(&id).execute(&s.pool).await;
     let rows=sqlx::query_scalar::<_,Value>("SELECT to_jsonb(r)-'baseline'-'result' FROM ms_requirement_impact_review r WHERE project_id=$1 AND requirement_id=$2 ORDER BY created_at DESC LIMIT 30").bind(&q.project_id).bind(id).fetch_all(&s.pool).await;
@@ -161,14 +161,14 @@ async fn list(
         Err(_) => error("review history unavailable", StatusCode::INTERNAL_SERVER_ERROR),
     }
 }
-async fn readable(u: &AuthUser, s: &RagState, id: &str) -> Result<Value, Response> {
+async fn readable(u: &AuthUser, s: &RagState, id: &str) -> Result<Value, HttpError> {
     let row: Value =
         sqlx::query_scalar("SELECT to_jsonb(r) FROM ms_requirement_impact_review r WHERE id=$1")
             .bind(id)
             .fetch_optional(&s.pool)
             .await
-            .map_err(|_| error("review unavailable", StatusCode::INTERNAL_SERVER_ERROR))?
-            .ok_or_else(|| error("review not found", StatusCode::NOT_FOUND))?;
+            .map_err(|_| HttpError::Json(StatusCode::INTERNAL_SERVER_ERROR, "review unavailable"))?
+            .ok_or(HttpError::Json(StatusCode::NOT_FOUND, "review not found"))?;
     gate(u, s, text(&row, "project_id")).await?;
     let _ = requirement(s, text(&row, "project_id"), text(&row, "requirement_id"), None).await?;
     let a = load_audience(u, &s.pool).await;
@@ -190,29 +190,29 @@ async fn readable(u: &AuthUser, s: &RagState, id: &str) -> Result<Value, Respons
         );
     }
     let ids: Vec<String> = ids.into_iter().collect();
-    let n:i64=sqlx::query_scalar("SELECT count(*) FROM ms_rag_document WHERE project_id=$1 AND id=ANY($2) AND ($3 OR owner_id=$4 OR visibility_groups&&$5::text[])").bind(text(&row,"project_id")).bind(&ids).bind(a.is_admin).bind(&a.user_id).bind(&a.visible_group_ids).fetch_one(&s.pool).await.map_err(|_|error("source permissions unavailable",StatusCode::INTERNAL_SERVER_ERROR))?;
+    let n:i64=sqlx::query_scalar("SELECT count(*) FROM ms_rag_document WHERE project_id=$1 AND id=ANY($2) AND ($3 OR owner_id=$4 OR visibility_groups&&$5::text[])").bind(text(&row,"project_id")).bind(&ids).bind(a.is_admin).bind(&a.user_id).bind(&a.visible_group_ids).fetch_one(&s.pool).await.map_err(|_|HttpError::Json(StatusCode::INTERNAL_SERVER_ERROR, "source permissions unavailable"))?;
     if n != ids.len() as i64 {
-        return Err(error(
-            "评审所用资料的可见性已变化，请按当前权限重新评审",
+        return Err(HttpError::Json(
             StatusCode::FORBIDDEN,
+            "评审所用资料的可见性已变化，请按当前权限重新评审",
         ));
     }
     if !u.can("FUNCTIONAL_CASE", "READ") && row["baseline"]["canReadCases"] == true {
-        return Err(error(
-            "functional case permission required for this review",
+        return Err(HttpError::Json(
             StatusCode::FORBIDDEN,
+            "functional case permission required for this review",
         ));
     }
     if !u.can("API_DEFINITION", "READ") && row["baseline"]["canReadApi"] == true {
-        return Err(error(
-            "API definition permission required for this review",
+        return Err(HttpError::Json(
             StatusCode::FORBIDDEN,
+            "API definition permission required for this review",
         ));
     }
     for commit in row["result"]["commitEvidence"].as_array().into_iter().flatten() {
-        let allowed:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM ms_rag_git_commit WHERE project_id=$1 AND repository_id=$2 AND sha=$3 AND ($4 OR owner_id=$5 OR visibility_groups&&$6::text[]))").bind(text(&row,"project_id")).bind(text(commit,"repositoryId")).bind(text(commit,"sha")).bind(a.is_admin).bind(&a.user_id).bind(&a.visible_group_ids).fetch_one(&s.pool).await.map_err(|_|error("commit permissions unavailable",StatusCode::INTERNAL_SERVER_ERROR))?;
+        let allowed:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM ms_rag_git_commit WHERE project_id=$1 AND repository_id=$2 AND sha=$3 AND ($4 OR owner_id=$5 OR visibility_groups&&$6::text[]))").bind(text(&row,"project_id")).bind(text(commit,"repositoryId")).bind(text(commit,"sha")).bind(a.is_admin).bind(&a.user_id).bind(&a.visible_group_ids).fetch_one(&s.pool).await.map_err(|_|HttpError::Json(StatusCode::INTERNAL_SERVER_ERROR, "commit permissions unavailable"))?;
         if !allowed {
-            return Err(error("提交证据权限已变化，请重新评审", StatusCode::FORBIDDEN));
+            return Err(HttpError::Json(StatusCode::FORBIDDEN, "提交证据权限已变化，请重新评审"));
         }
     }
     Ok(row)
@@ -220,7 +220,7 @@ async fn readable(u: &AuthUser, s: &RagState, id: &str) -> Result<Value, Respons
 async fn detail(u: AuthUser, State(s): State<RagState>, Path(id): Path<String>) -> Response {
     let mut row = match readable(&u, &s, &id).await {
         Ok(v) => v,
-        Err(r) => return r,
+        Err(r) => return r.into_response(),
     };
     let stale = stale(&s, &row).await.unwrap_or(true);
     row["stale"] = json!(stale);
@@ -301,7 +301,7 @@ async fn stale(s: &RagState, row: &Value) -> Result<bool, sqlx::Error> {
 async fn cancel(u: AuthUser, State(s): State<RagState>, Path(id): Path<String>) -> Response {
     let row = match readable(&u, &s, &id).await {
         Ok(r) => r,
-        Err(r) => return r,
+        Err(r) => return r.into_response(),
     };
     if text(&row, "created_by") != u.user_id && !u.can("PROJECT", "UPDATE") {
         return error("only the creator or a project manager can cancel", StatusCode::FORBIDDEN);
@@ -717,7 +717,7 @@ async fn generate(s: &RagState, u: &AuthUser, p: &str, baseline: &Value) -> Resu
 
 async fn actions(u: AuthUser, State(s): State<RagState>, Path(id): Path<String>) -> Response {
     if let Err(r) = readable(&u, &s, &id).await {
-        return r;
+        return r.into_response();
     }
     match sqlx::query_scalar::<_,Value>("SELECT to_jsonb(a) FROM ms_requirement_review_action a WHERE review_id=$1 ORDER BY created_at,id").bind(id).fetch_all(&s.pool).await{Ok(items)=>Json(json!({"items":items})).into_response(),Err(_)=>error("actions unavailable",StatusCode::INTERNAL_SERVER_ERROR)}
 }
@@ -753,7 +753,7 @@ async fn create_action(
 ) -> Response {
     let row = match readable(&u, &s, &id).await {
         Ok(v) => v,
-        Err(r) => return r,
+        Err(r) => return r.into_response(),
     };
     if !u.can("REQUIREMENT", "UPDATE") {
         return error("requirement update permission required", StatusCode::FORBIDDEN);
@@ -854,7 +854,7 @@ async fn update_action(
         return error("action not found", StatusCode::NOT_FOUND);
     };
     if let Err(r) = readable(&u, &s, text(&action, "review_id")).await {
-        return r;
+        return r.into_response();
     }
     if !u.can("REQUIREMENT", "UPDATE")
         || (text(&action, "assignee_id") != u.user_id && !u.can("PROJECT", "UPDATE"))
@@ -898,7 +898,7 @@ async fn decide(
 ) -> Response {
     let row = match readable(&u, &s, &id).await {
         Ok(v) => v,
-        Err(r) => return r,
+        Err(r) => return r.into_response(),
     };
     if !u.can("REQUIREMENT", "UPDATE") {
         return error("requirement update permission required", StatusCode::FORBIDDEN);
@@ -917,7 +917,7 @@ async fn decide(
 
 async fn summaries(u: AuthUser, State(s): State<RagState>, Query(q): Query<Project>) -> Response {
     if let Err(r) = gate(&u, &s, &q.project_id).await {
-        return r;
+        return r.into_response();
     }
     let a = load_audience(&u, &s.pool).await;
     let rows=sqlx::query_scalar::<_,Value>(r#"SELECT jsonb_build_object('requirementId',r.requirement_id,'reviewId',r.id,'state',r.state,'version',r.requirement_version,'versionChanged',r.requirement_version<>(SELECT max(version) FROM ms_requirement_version WHERE requirement_id=r.requirement_id),'risk',COALESCE((SELECT severity FROM (SELECT f->>'severity' severity FROM jsonb_array_elements(COALESCE(r.result->'opinion'->'findings','[]')) f) f ORDER BY CASE severity WHEN 'critical' THEN 4 WHEN 'high' THEN 3 WHEN 'medium' THEN 2 ELSE 1 END DESC LIMIT 1),'none'),'repositories',COALESCE((SELECT jsonb_agg(jsonb_build_object('id',repo->>'id','name',repo->>'name')) FROM jsonb_array_elements(r.baseline->'services') svc CROSS JOIN LATERAL jsonb_array_elements(svc->'repositories') repo),'[]'),'gaps',jsonb_array_length(COALESCE(r.result->'coverageGaps','[]')),'createdAt',r.created_at)
@@ -1015,7 +1015,7 @@ mod tests {
             .await
             .expect("revoke");
         assert_eq!(
-            readable(&u, &s, id).await.expect_err("revocation").status(),
+            readable(&u, &s, id).await.expect_err("revocation").into_response().status(),
             StatusCode::FORBIDDEN
         );
     }

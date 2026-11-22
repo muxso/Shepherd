@@ -34,7 +34,9 @@ impl RedisArgument {
             Self::Binary { hex } => {
                 let bytes = hex
                     .as_bytes()
-                    .chunks_exact(2)
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
                     .map(|pair| {
                         let high =
                             (pair[0] as char).to_digit(16).ok_or(CommandError::InvalidArgument)?;

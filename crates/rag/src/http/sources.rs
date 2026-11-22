@@ -36,7 +36,7 @@ pub(super) async fn get_document(
         return StatusCode::NOT_FOUND.into_response();
     };
     if let Err(response) = authorize_project(&user, &state.pool, &project, "READ").await {
-        return response;
+        return response.into_response();
     }
     let audience = load_audience(&user, &state.pool).await;
     let visible: bool = match sqlx::query_scalar(
