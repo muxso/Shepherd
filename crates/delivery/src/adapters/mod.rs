@@ -6,6 +6,8 @@ pub use stub::{EchoAgentExecutor, StubAgentExecutor, StubBehavior};
 
 #[cfg(feature = "exec-http")]
 pub mod agent_http;
+#[cfg(feature = "exec-queue-redis")]
+mod fleet_backend;
 #[cfg(feature = "exec-queue")]
 pub mod fleet_registry;
 #[cfg(feature = "http")]
@@ -21,6 +23,8 @@ pub mod redis_queue;
 #[cfg(feature = "exec-queue-redis")]
 pub mod redis_registry;
 
+#[cfg(feature = "exec-queue-redis")]
+pub use fleet_backend::{FleetBackend, FleetBackendError};
 #[cfg(feature = "exec-queue")]
 pub use fleet_registry::InMemoryFleetRegistry;
 #[cfg(feature = "exec-queue")]

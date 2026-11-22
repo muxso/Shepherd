@@ -436,23 +436,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut fleet_queue: Option<Arc<dyn delivery::ports::WorkQueue>> = None;
     let mut fleet_registry: Option<Arc<dyn delivery::ports::FleetRegistry>> = None;
     let agent: Arc<dyn AgentExecutor> = if cfg.agent.fleet {
-        let redis_url = cfg.agent.fleet_redis.clone();
-        let q: Arc<dyn delivery::ports::WorkQueue>;
-        let reg: Arc<dyn delivery::ports::FleetRegistry>;
-        if let Some(url) = &redis_url {
-            q = delivery::adapters::RedisStreamQueue::connect(url, &bind)
+        let backend =
+            delivery::adapters::FleetBackend::connect(cfg.agent.fleet_redis.as_deref(), &bind)
                 .await
-                .expect("connect fleet redis");
-            reg = delivery::adapters::RedisFleetRegistry::connect(url)
-                .await
-                .expect("connect fleet registry");
-        } else {
-            q = delivery::adapters::InMemoryWorkQueue::new();
-            reg = delivery::adapters::InMemoryFleetRegistry::new();
-        }
-        fleet_queue = Some(q.clone());
-        fleet_registry = Some(reg);
-        Arc::new(delivery::adapters::QueueAgentExecutor::new(q))
+                .expect("initialize fleet backend");
+        fleet_queue = Some(backend.queue.clone());
+        fleet_registry = Some(backend.registry);
+        Arc::new(delivery::adapters::QueueAgentExecutor::new(backend.queue))
     } else if let Some(url) = cfg.agent.url.clone() {
         Arc::new(delivery::adapters::agent_http::HttpAgentExecutor::new(url))
     } else if let Some(cmd) = cfg.agent.cmd.clone() {
