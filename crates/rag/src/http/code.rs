@@ -52,7 +52,7 @@ struct Checkpoint {
 }
 async fn checkpoint(u: AuthUser, State(s): State<RagState>, Json(b): Json<Checkpoint>) -> Response {
     if let Err(r) = authorize_project(&u, &s.pool, &b.project_id, "ADD").await {
-        return r.into_response();
+        return r;
     }
     if !valid_sha(&b.commit_sha)
         || b.repository_id.trim().is_empty()
@@ -148,7 +148,7 @@ async fn repositories(
     Query(q): Query<ProjectQuery>,
 ) -> Response {
     if let Err(r) = authorize_project(&u, &s.pool, &q.project_id, "READ").await {
-        return r.into_response();
+        return r;
     }
     let a = load_audience(&u, &s.pool).await;
     let rows=sqlx::query_scalar::<_,Value>("SELECT jsonb_build_object('id',c.repository_id,'name',c.name,'url',c.url,'branch',c.branch,'commitSha',c.commit_sha,'files',jsonb_array_length(c.files),'updatedAt',c.updated_at) FROM ms_rag_repository_checkpoint c WHERE c.project_id=$1 AND ($2 OR c.owner_id=$3 OR c.visibility_groups&&$4::text[]) AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements(c.files) f LEFT JOIN ms_rag_document d ON d.id=f->>'documentId' AND d.project_id=c.project_id WHERE d.id IS NULL OR NOT($2 OR d.owner_id=$3 OR d.visibility_groups&&$4::text[])) ORDER BY c.name,c.branch").bind(&q.project_id).bind(a.is_admin).bind(&a.user_id).bind(&a.visible_group_ids).fetch_all(&s.pool).await;
@@ -171,7 +171,7 @@ async fn inventory(
     Json(b): Json<InventoryRequest>,
 ) -> Response {
     if let Err(r) = authorize_project(&u, &s.pool, &b.project_id, "READ").await {
-        return r.into_response();
+        return r;
     }
     if !u.can("FUNCTIONAL_CASE", "ADD") {
         return err("permission denied", StatusCode::FORBIDDEN);
@@ -271,7 +271,7 @@ async fn activity(
     Json(b): Json<ActivityUpload>,
 ) -> Response {
     if let Err(r) = authorize_project(&u, &s.pool, &b.project_id, "ADD").await {
-        return r.into_response();
+        return r;
     }
     if b.commits.len() > 500 {
         return err("at most 500 commit records per batch", StatusCode::BAD_REQUEST);

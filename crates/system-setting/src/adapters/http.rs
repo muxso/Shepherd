@@ -665,8 +665,8 @@ fn oidc_repo_err(e: OidcRepoError) -> Response {
 
 /// Rebuilds the live registry from the repository after a mutation.
 #[cfg(all(feature = "http", feature = "oidc"))]
-async fn oidc_reload_after_mutate(st: &OidcAdminState) -> Result<(), OidcRepoError> {
-    st.oidc.reload(st.repo.as_ref(), build_provider).await
+async fn oidc_reload_after_mutate(st: &OidcAdminState) -> Result<(), Response> {
+    st.oidc.reload(st.repo.as_ref(), build_provider).await.map_err(oidc_repo_err)
 }
 
 #[utoipa::path(get, path = "/system/oidc/providers", tag = "oidc", responses((status = 200, body = Vec<OidcProviderView>), (status = 401), (status = 403)), security(("bearer" = [])))]
@@ -731,7 +731,7 @@ async fn oidc_create_provider(
         return oidc_repo_err(e);
     }
     if let Err(e) = oidc_reload_after_mutate(&st).await {
-        return oidc_repo_err(e);
+        return e;
     }
     (StatusCode::CREATED, Json(OidcProviderView::from_provider(&provider))).into_response()
 }
@@ -768,7 +768,7 @@ async fn oidc_update_provider(
         return oidc_repo_err(e);
     }
     if let Err(e) = oidc_reload_after_mutate(&st).await {
-        return oidc_repo_err(e);
+        return e;
     }
     (StatusCode::OK, Json(OidcProviderView::from_provider(&provider))).into_response()
 }
@@ -786,7 +786,7 @@ async fn oidc_delete_provider(
     match st.repo.delete(&key).await {
         Ok(()) => {
             if let Err(e) = oidc_reload_after_mutate(&st).await {
-                return oidc_repo_err(e);
+                return e;
             }
             StatusCode::NO_CONTENT.into_response()
         }

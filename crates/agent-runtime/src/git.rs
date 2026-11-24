@@ -41,10 +41,13 @@ async fn web_commit_url(cwd: &str, sha: &str) -> Option<String> {
     let (host, path) = if let Some(rest) = remote.strip_prefix("git@") {
         let (h, p) = rest.split_once(':')?;
         (h.to_string(), p.to_string())
-    } else {
-        let rest = remote.strip_prefix("https://").or_else(|| remote.strip_prefix("http://"))?;
+    } else if let Some(rest) =
+        remote.strip_prefix("https://").or_else(|| remote.strip_prefix("http://"))
+    {
         let (h, p) = rest.split_once('/')?;
         (h.to_string(), p.to_string())
+    } else {
+        return None;
     };
     let seg = if host.contains("gitlab") { "/-/commit/" } else { "/commit/" };
     Some(format!("https://{host}/{path}{seg}{sha}"))

@@ -19,7 +19,7 @@ async fn spawn_server() -> String {
                 let hits = hits.clone();
                 async move {
                     let n = hits.fetch_add(1, Ordering::SeqCst) + 1;
-                    if n.is_multiple_of(10) {
+                    if n % 10 == 0 {
                         (axum::http::StatusCode::INTERNAL_SERVER_ERROR, "boom")
                     } else {
                         (axum::http::StatusCode::OK, "pong")

@@ -19,7 +19,7 @@ struct Publish {
 }
 async fn publish(user: AuthUser, State(st): State<RagState>, Json(b): Json<Publish>) -> Response {
     if let Err(e) = authorize_project(&user, &st.pool, &b.project_id, "ADD").await {
-        return e.into_response();
+        return e;
     }
     if b.title.trim().is_empty()
         || b.title.chars().count() > 200
@@ -109,7 +109,7 @@ struct List {
 }
 async fn list(user: AuthUser, State(st): State<RagState>, Query(q): Query<List>) -> Response {
     if let Err(e) = authorize_project(&user, &st.pool, &q.project_id, "READ").await {
-        return e.into_response();
+        return e;
     }
     let a = load_audience(&user, &st.pool).await;
     let result=sqlx::query_scalar::<_,Value>("SELECT jsonb_build_object('documentId',d.id,'title',d.title,'updatedAt',d.updated_at,'ownerId',d.owner_id,'visibilityGroups',d.visibility_groups,'version',(SELECT max(version) FROM ms_rag_onboarding_revision r WHERE r.document_id=d.id)) FROM ms_rag_document d WHERE d.project_id=$1 AND d.source_type='onboarding' AND ($2 OR d.owner_id=$3 OR d.visibility_groups && $4) ORDER BY d.updated_at DESC LIMIT 500").bind(&q.project_id).bind(a.is_admin).bind(a.user_id).bind(a.visible_group_ids).fetch_all(&st.pool).await;
@@ -125,7 +125,7 @@ async fn detail(user: AuthUser, State(st): State<RagState>, Path(id): Path<Strin
         _ => return StatusCode::NOT_FOUND.into_response(),
     };
     if let Err(e) = authorize_project(&user, &st.pool, &project, "READ").await {
-        return e.into_response();
+        return e;
     }
     let a = load_audience(&user, &st.pool).await;
     if !a.is_admin

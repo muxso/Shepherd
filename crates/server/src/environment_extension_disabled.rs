@@ -49,16 +49,14 @@ impl ExecutionResolver {
         _environment: Option<&str>,
         variables: std::collections::BTreeMap<String, String>,
         processors: &[api_runner::Processor],
-    ) -> Result<api_runner::PreparedVariables, Box<axum::response::Response>> {
+    ) -> Result<api_runner::PreparedVariables, axum::response::Response> {
         if !processors.is_empty() {
             use axum::response::IntoResponse;
-            return Err(Box::new(
-                (
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    Json(json!({"error":"environment preparation plugin is not installed"})),
-                )
-                    .into_response(),
-            ));
+            return Err((
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(json!({"error":"environment preparation plugin is not installed"})),
+            )
+                .into_response());
         }
         Ok(api_runner::PreparedVariables { variables, steps: Vec::new() })
     }
@@ -66,7 +64,7 @@ impl ExecutionResolver {
         &self,
         _user: AuthUser,
         _environment: &str,
-    ) -> Result<api_runner::HostOverrides, Box<axum::response::Response>> {
+    ) -> Result<api_runner::HostOverrides, axum::response::Response> {
         Ok(api_runner::HostOverrides::default())
     }
 }

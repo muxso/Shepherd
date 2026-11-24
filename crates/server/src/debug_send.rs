@@ -219,7 +219,7 @@ async fn send(
         .await
     {
         Ok(prepared) => prepared,
-        Err(response) => return *response,
+        Err(response) => return response,
     };
     let spec = RequestSpec {
         timeout_ms: None,
@@ -245,7 +245,7 @@ async fn send(
     let hosts = match req.environment_id.as_deref() {
         Some(environment) => match state.environment.host_overrides(user, environment).await {
             Ok(hosts) => hosts,
-            Err(response) => return *response,
+            Err(response) => return response,
         },
         None => api_runner::HostOverrides::default(),
     };
