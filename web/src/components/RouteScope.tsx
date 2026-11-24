@@ -1,6 +1,7 @@
 import { Navigate, Outlet, useLocation, useParams } from 'react-router-dom'
-import { Button, Empty, Spin } from 'antd'
+import { Button, Empty } from 'antd'
 import { useApp } from '../context'
+import { PageSkeleton } from './Page'
 import { useI18n } from '../i18n'
 
 /**
@@ -14,13 +15,7 @@ export function ProjectGuard() {
   const { projects, projectsLoaded, setProjectId } = useApp()
   const { t } = useI18n()
 
-  if (!projectsLoaded) {
-    return (
-      <div style={{ display: 'flex', justifyContent: 'center', paddingTop: 120 }}>
-        <Spin size="large" />
-      </div>
-    )
-  }
+  if (!projectsLoaded) return <PageSkeleton />
   const ok = projects.some((p) => p.id === projectId)
   if (!ok) {
     return (
@@ -55,7 +50,7 @@ export function LegacyRedirect() {
   const loc = useLocation()
   if (!projectId) {
     // No project resolvable yet: wait for the project list, then this re-renders.
-    if (!projectsLoaded) return <div style={{ display: 'flex', justifyContent: 'center', paddingTop: 120 }}><Spin size="large" /></div>
+    if (!projectsLoaded) return <PageSkeleton />
     return <Navigate to="/home" replace />
   }
   return <Navigate to={`/p/${projectId}${loc.pathname}${loc.search}`} replace />

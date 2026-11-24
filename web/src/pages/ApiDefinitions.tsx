@@ -1,8 +1,10 @@
-import { splitProcessors } from '../plugins/environment/preparation'
+import { phaseProcessors, splitProcessors } from '../plugins/environment/preparation'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Button, Checkbox, Divider, Dropdown, Empty, Input, InputNumber, Table, Modal, Popover, Radio, Segmented, Select, Space, Switch, Tabs, Tag, Tooltip, Tree, Upload } from 'antd'
 import ResizableDrawer from '../components/ResizableDrawer'
 import EditDrawer from '../components/EditDrawer'
+import ProcessorEditor, { type Processor } from '../components/ProcessorEditor'
+import CurlImportDrawer, { HTTP_METHODS as METHODS } from '../components/CurlImportDrawer'
 import { useSearchParams } from 'react-router-dom'
 import { message, modal } from '../feedback'
 import {
@@ -34,7 +36,7 @@ import { useApp } from '../context'
 import { methodColor, statusColor, statusLabel, caseStatusLabel } from '../components/tags'
 import CasesPanel from './CasesPanel'
 import MocksPanel from './MocksPanel'
-import ApiSpecPanel, { DebugResultPanel, emptySpec, parseCurl, type ApiSpecPanelHandle, type ExecMode, type SentRequest } from '../components/ApiSpecPanel'
+import ApiSpecPanel, { DebugResultPanel, emptySpec, curlSpecPatch, type ApiSpecPanelHandle, type ExecMode, type SentRequest } from '../components/ApiSpecPanel'
 import KVEditor, { type KVRow } from '../components/KVEditor'
 import AssertionEditor from '../components/AssertionEditor'
 import ReferencesPanel from '../components/ReferencesPanel'
@@ -42,7 +44,6 @@ import ChangeHistoryPanel from '../components/ChangeHistoryPanel'
 import { useOpenParam, ResizableSider } from '../components/Workspace'
 import { useI18n } from '../i18n'
 
-const METHODS = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH']
 const PROTOCOLS = ['HTTP', 'GRPC', 'SQL', 'REDIS', 'WEBSOCKET']
 const API_STATUSES = ['DRAFT', 'DEBUGGING', 'COMPLETED', 'DEPRECATED']
 const LIST_KEY = '__list__'
@@ -75,6 +76,8 @@ export default function ApiDefinitions() {
   const [moduleForm, setModuleForm] = useState<{ mode: 'create' | 'rename'; id?: string; parentId?: string | null; name?: string } | null>(null)
   const [openIds, setOpenIds] = useState<string[]>([])
   const [openCases, setOpenCases] = useState<Record<string, ApiCase>>({}) // open case-detail tabs (key = caseId)
+  const [editCaseId, setEditCaseId] = useState<string>()
+  const [caseRevisions, setCaseRevisions] = useState<Record<string, number>>({})
   const [activeKey, setActiveKey] = useState(LIST_KEY)
   const [searchParams, setSearchParams] = useSearchParams()
   // Module tree: search / show interfaces in tree / hide empty modules / protocol filter / controlled expand.
@@ -198,9 +201,14 @@ export default function ApiDefinitions() {
     setActiveKey(id)
   }
   // Clicking a CASE row opens its detail tab; the case object is captured at open time so the tab survives view switches.
-  const openCase = (c: ApiCase) => {
+  const openCase = (c: ApiCase, edit = false) => {
     setOpenCases((m) => ({ ...m, [c.id]: c }))
+    setEditCaseId(edit ? c.id : undefined)
     setActiveKey(`case:${c.id}`)
+  }
+  const refreshCaseLists = (id: string) => {
+    if (id) setCaseRevisions(current => ({ ...current, [id]: (current[id] ?? 0) + 1 }))
+    api.projectCases(projectId).then(result => setCaseRows(result.items)).catch(() => undefined)
   }
   useOpenParam(openDef) // ?open=<definitionId> deep link (persistent → shareable)
   // ?openCase=<caseId> deep link (case click in the reference graph): fetch project cases, then open the case's detail tab.
@@ -229,8 +237,11 @@ export default function ApiDefinitions() {
     }
     if (id.startsWith('case:')) {
       const cid = id.slice(5)
+      const parentId = openCases[cid]?.apiDefinitionId
       setOpenCases((m) => { const n = { ...m }; delete n[cid]; return n })
-      setActiveKey((cur) => (cur === id ? LIST_KEY : cur))
+      setEditCaseId(current => current === cid ? undefined : current)
+      const nextActive = parentId && openIds.includes(parentId) ? parentId : LIST_KEY
+      setActiveKey((cur) => cur === id ? nextActive : cur)
       return
     }
     setOpenIds((ids) => {
@@ -528,7 +539,7 @@ export default function ApiDefinitions() {
             <span style={{ maxWidth: 120, display: 'inline-block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', verticalAlign: 'middle' }}>{d.name}</span>
           </Space>
         ),
-        children: <ApiDetail definition={d} onUpdated={load} />,
+        children: <ApiDetail definition={d} onUpdated={load} onOpenCase={openCase} caseRevision={caseRevisions[d.id] ?? 0} />,
       })),
     ...Object.values(openCases).map((c) => ({
       key: `case:${c.id}`,
@@ -538,7 +549,13 @@ export default function ApiDefinitions() {
           <span style={{ maxWidth: 120, display: 'inline-block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', verticalAlign: 'middle' }}>{c.name}</span>
         </Space>
       ),
-      children: <CaseDetailTab caseItem={c} projectId={projectId} onClose={() => closeTab(`case:${c.id}`)} onDeleted={() => api.projectCases(projectId).then((r) => setCaseRows(r.items)).catch(() => undefined)} />,
+      children: <CaseDetailTab caseItem={c} projectId={projectId} editOpen={editCaseId === c.id}
+        onEditChange={open => setEditCaseId(open ? c.id : undefined)} onClose={() => closeTab(`case:${c.id}`)}
+        onSaved={updated => {
+          setOpenCases(current => current[updated.id] ? { ...current, [updated.id]: updated } : current)
+          refreshCaseLists(updated.apiDefinitionId)
+        }}
+        onDeleted={() => refreshCaseLists(c.apiDefinitionId)} />,
     })),
   ]
 
@@ -742,11 +759,13 @@ function CaseEditDrawer({ open, caseItem, onClose, onSaved }: { open: boolean; c
   const [authType, setAuthType] = useState<'none' | 'bearer' | 'basic'>((caseItem.auth?.type as 'none' | 'bearer' | 'basic') || 'none')
   const [authToken, setAuthToken] = useState(caseItem.auth?.token || '')
   const [assertions, setAssertions] = useState<unknown[]>((caseItem.assertions as unknown[]) || [])
+  const [pre, setPre] = useState<Processor[]>(() => splitProcessors(caseItem.processors as unknown[]).preProcessors as Processor[])
   const [saving, setSaving] = useState(false)
 
   // Reset the form from the latest case values when reopening or switching cases.
   useEffect(() => {
     if (!open) return
+    setPre(splitProcessors(caseItem.processors as unknown[]).preProcessors as Processor[])
     setName(caseItem.name); setMethod(caseItem.method); setUrl(caseItem.url)
     setPriority(caseItem.priority || 'P0'); setTimeoutMs(caseItem.timeoutMs ?? null); setStatus(caseItem.status || '进行中'); setTags(caseItem.tags || [])
     setHeaders(caseItem.headers?.length ? caseItem.headers : [blankKv()])
@@ -762,7 +781,7 @@ function CaseEditDrawer({ open, caseItem, onClose, onSaved }: { open: boolean; c
     if (!name.trim()) return message.warning(t('apidef.caseNameRequired', '请输入用例名称'))
     if (!url.trim()) return message.warning(t('editor.urlRequired', '请输入 URL'))
     const auth = authType === 'none' ? { type: 'none' } : { type: authType, token: authToken }
-    const payload = { name, method, url, body: body || null, assertions, processors: caseItem.processors, priority, status, tags, headers: clean(headers), queryParams: clean(query), restParams: clean(rest), auth, timeoutMs }
+    const payload = { name, method, url, body: body || null, assertions, processors: phaseProcessors(pre, splitProcessors(caseItem.processors as unknown[]).processors), priority, status, tags, headers: clean(headers), queryParams: clean(query), restParams: clean(rest), auth, timeoutMs }
     setSaving(true)
     try {
       await api.updateCase(caseItem.id, payload)
@@ -781,6 +800,7 @@ function CaseEditDrawer({ open, caseItem, onClose, onSaved }: { open: boolean; c
     { key: 'body', label: t('apidef.requestBody', '请求体'), children: <Input.TextArea rows={8} value={body} onChange={(e) => setBody(e.target.value)} className="ms-mono" placeholder='{"k":"v"}' /> },
     kvTab('query', 'Query', query, setQuery),
     kvTab('rest', 'REST', rest, setRest),
+    { key: 'pre', label: '前置操作', children: <ProcessorEditor value={pre} onChange={setPre} allowed={['wait', 'plugin', 'sql', 'sandboxScript']} /> },
     { key: 'assert', label: `${t('apidef.assertions', '断言')}${assertions.length ? ` (${assertions.length})` : ''}`, children: <AssertionEditor value={assertions as never} onChange={(v) => setAssertions(v)} /> },
     { key: 'auth', label: t('apidef.auth', '认证'), children: (
       <Space direction="vertical" style={{ width: '100%' }}>
@@ -817,10 +837,16 @@ function CaseEditDrawer({ open, caseItem, onClose, onSaved }: { open: boolean; c
   )
 }
 
-function CaseDetailTab({ caseItem, projectId, onClose, onDeleted }: { caseItem: ApiCase; projectId: string; onClose: () => void; onDeleted?: () => void }) {
+function CaseDetailTab({ caseItem: c, projectId, editOpen, onEditChange, onClose, onSaved, onDeleted }: {
+  caseItem: ApiCase
+  projectId: string
+  editOpen: boolean
+  onEditChange: (open: boolean) => void
+  onClose: () => void
+  onSaved: (item: ApiCase) => void
+  onDeleted: () => void
+}) {
   const { t } = useI18n()
-  const [c, setC] = useState<ApiCase>(caseItem) // local copy so edits reflect immediately
-  const [editOpen, setEditOpen] = useState(false)
   const [envs, setEnvs] = useState<Environment[]>([])
   const [envId, setEnvId] = useState<string>('')
   const [hdrView, setHdrView] = useState<'table' | 'raw'>('table')
@@ -841,7 +867,7 @@ function CaseDetailTab({ caseItem, projectId, onClose, onDeleted }: { caseItem: 
     const req: SentRequest = { method: c.method, url, headers: hdrs, body: c.body || undefined }
     setLastReq(req); setRunning(true); setErr(''); setResp(null)
     try {
-      setResp(await api.debugSend({ ...req, environmentId: env?.id, baseUrl: env?.baseUrl, variables: env?.variables, ...splitProcessors(c.processors as unknown[]), assertions: (c.assertions as unknown[]) || [] }))
+      setResp(await api.debugSend({ ...req, projectId: c.projectId, environmentId: env?.id, baseUrl: env?.baseUrl, variables: env?.variables, ...splitProcessors(c.processors as unknown[]), assertions: (c.assertions as unknown[]) || [] }))
     } catch (e) {
       setErr(e instanceof ApiError ? e.message : t('editor.sendFail', '发送失败'))
     } finally {
@@ -898,16 +924,16 @@ function CaseDetailTab({ caseItem, projectId, onClose, onDeleted }: { caseItem: 
           onClick={() => modal.confirm({
             title: t('apidef.caseDeleteConfirm', '删除该用例?'), okType: 'danger', okText: t('a.delete', '删除'), cancelText: t('a.cancel', '取消'),
             onOk: async () => {
-              try { await api.deleteCase(c.id); message.success(t('apidef.deleted', '已删除')); onClose(); onDeleted?.() }
+              try { await api.deleteCase(c.id); message.success(t('apidef.deleted', '已删除')); onClose(); onDeleted() }
               catch (e) { message.error(e instanceof ApiError ? e.message : t('apidef.deleteFailed', '删除失败')) }
             },
           })}
         >{t('a.delete', '删除')}</Button>
-        <Button onClick={() => setEditOpen(true)}>{t('a.edit', '编辑')}</Button>
+        <Button onClick={() => onEditChange(true)}>{t('a.edit', '编辑')}</Button>
         <Button type="primary" icon={<ThunderboltOutlined />} loading={running} onClick={run}>{t('apidef.serverRun', '服务端执行')}</Button>
         <Button onClick={onClose}>{t('a.close', '关闭')}</Button>
       </div>
-      <CaseEditDrawer open={editOpen} caseItem={c} onClose={() => setEditOpen(false)} onSaved={(u) => { setC(u); setEditOpen(false); onDeleted?.() }} />
+      <CaseEditDrawer open={editOpen} caseItem={c} onClose={() => onEditChange(false)} onSaved={updated => { onSaved(updated); onEditChange(false) }} />
       <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 12, fontSize: 12, color: 'var(--text-3)', flexWrap: 'wrap' }}>
         <span>{t('apidef.colMethod', '请求类型')} <Tag color={methodColor(c.method)} style={{ margin: 0 }}>{c.method}</Tag></span>
         <span>{t('apidef.colPath', '路径')} <span className="ms-mono" style={{ color: 'var(--text)' }}>{c.url}</span></span>
@@ -927,7 +953,12 @@ function CaseDetailTab({ caseItem, projectId, onClose, onDeleted }: { caseItem: 
   )
 }
 
-function ApiDetail({ definition, onUpdated }: { definition: ApiDefinition; onUpdated?: () => void }) {
+function ApiDetail({ definition, onUpdated, onOpenCase, caseRevision }: {
+  definition: ApiDefinition
+  onUpdated?: () => void
+  onOpenCase: (item: ApiCase, edit?: boolean) => void
+  caseRevision: number
+}) {
   const { t } = useI18n()
   // Top-level tabs + define/debug switch inside the Define tab (debug is a mode of Define).
   const [tab, setTab] = useState('preview')
@@ -941,7 +972,6 @@ function ApiDetail({ definition, onUpdated }: { definition: ApiDefinition; onUpd
   const [reqPath, setReqPath] = useState(definition.path || '')
   const isHttp = (definition.protocol || 'HTTP').toUpperCase() === 'HTTP'
   const [curlOpen, setCurlOpen] = useState(false)
-  const [curlText, setCurlText] = useState('')
   // Debug exec mode: server proxy vs. direct browser request.
   const [execMode, setExecMode] = useState<ExecMode>('server')
   // Debug environment (picked in the top bar; supplies baseUrl/default headers/variables).
@@ -1022,19 +1052,6 @@ function ApiDetail({ definition, onUpdated }: { definition: ApiDefinition; onUpd
 
   // Define/debug share one editor shell: request line (protocol/method/path) + cURL import + inline define/debug switch
   // + run/save (ref #6/#7). Debug appends a response panel below the sub-tabs.
-  const importCurl = () => {
-    const parsed = parseCurl(curlText)
-    if (!parsed) {
-      message.error(t('apidef.curlParseFail', 'cURL 解析失败,请检查命令'))
-      return
-    }
-    setReqMethod(parsed.method)
-    setReqPath(parsed.url)
-    specRef.current?.applyCurl(parsed)
-    setCurlOpen(false)
-    setCurlText('')
-    message.success(t('apidef.curlImported', '已导入 cURL'))
-  }
   const defineTab = (
     <div>
       {!isHttp && (
@@ -1123,23 +1140,11 @@ function ApiDetail({ definition, onUpdated }: { definition: ApiDefinition; onUpd
         onCaseSaved={() => { setCasesRefresh((n) => n + 1); setTab('cases') }}
         hideSave
       />
-      <EditDrawer
-        title={t('apidef.importCurl', '导入 cURL')}
-        open={curlOpen}
-        onCancel={() => setCurlOpen(false)}
-        onOk={importCurl}
-        okText={t('a.import', '导入')}
-        cancelText={t('a.cancel', '取消')}
-        width={680}
-      >
-        <Input.TextArea
-          rows={10}
-          value={curlText}
-          onChange={(e) => setCurlText(e.target.value)}
-          placeholder={"curl -X POST 'https://api.example.com/login' \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"user\":\"admin\"}'"}
-          className="ms-mono"
-        />
-      </EditDrawer>
+      <CurlImportDrawer open={curlOpen} onClose={() => setCurlOpen(false)} onImport={(parsed) => {
+        setReqMethod(parsed.method)
+        setReqPath(parsed.url)
+        specRef.current?.applyCurl(parsed)
+      }} />
     </div>
   )
 
@@ -1173,7 +1178,7 @@ function ApiDetail({ definition, onUpdated }: { definition: ApiDefinition; onUpd
         items={[
           { key: 'preview', label: t('apidef.preview', '预览'), children: previewTab },
           { key: 'define', label: t('apidef.define', '定义'), children: defineTab },
-          { key: 'cases', label: t('apidef.casesTab', '用例'), children: <CasesPanel definition={definition} refreshToken={casesRefresh} /> },
+          { key: 'cases', label: t('apidef.casesTab', '用例'), children: <CasesPanel definition={definition} refreshToken={casesRefresh + caseRevision} onOpenCase={onOpenCase} /> },
           { key: 'mock', label: 'MOCK', children: <MocksPanel definition={definition} /> },
         ]}
       />
@@ -1209,6 +1214,7 @@ function NewDefinitionTab({
   const [spec, setSpec] = useState<ApiSpec>(emptySpec())
   const [defMode, setDefMode] = useState<'define' | 'debug'>('define')
   const [saving, setSaving] = useState(false)
+  const [curlOpen, setCurlOpen] = useState(false)
   const isHttp = protocol === 'HTTP'
   // Debug reuses the detail page's ApiSpecPanel (controlled draft; no id so nothing persists); envs lazy-load on entering debug.
   const panelRef = useRef<ApiSpecPanelHandle>(null)
@@ -1251,6 +1257,11 @@ function NewDefinitionTab({
         {isHttp && <Select value={method} onChange={setMethod} style={{ width: 100 }} popupMatchSelectWidth={false} options={METHODS.map((m) => ({ value: m, label: m }))} />}
         <Input value={path} onChange={(e) => setPath(e.target.value)} placeholder={isHttp ? '/api/login' : t('apidef.pathOrTarget', '路径 / 目标')} className="ms-mono" style={{ flex: 1 }} />
         {isHttp && (
+          <Button icon={<CodeOutlined />} onClick={() => setCurlOpen(true)}>
+            {t('apidef.importCurl', '导入 cURL')}
+          </Button>
+        )}
+        {isHttp && (
           <Segmented
             value={defMode}
             onChange={(v) => setDefMode(v as 'define' | 'debug')}
@@ -1279,6 +1290,11 @@ function NewDefinitionTab({
         <Button type="primary" loading={saving} icon={<SaveOutlined />} onClick={save}>{t('a.save', '保存')}</Button>
       </div>
       <Input value={name} onChange={(e) => setName(e.target.value)} placeholder={t('apidef.nameInputPlaceholder', '请输入接口名称')} style={{ marginBottom: 12 }} autoFocus />
+      <CurlImportDrawer open={curlOpen} onClose={() => setCurlOpen(false)} onImport={(parsed) => {
+        setMethod(parsed.method)
+        setPath(parsed.url)
+        setSpec((current) => ({ ...current, ...curlSpecPatch(current, parsed) }))
+      }} />
       {!isHttp ? (
         <span style={{ color: 'var(--text-3)', fontSize: 12 }}>{t('apidef.nonHttpHint', '该协议当前仅登记/存储,执行能力待接入;保存后可在列表查看。')}</span>
       ) : defMode === 'define' ? (

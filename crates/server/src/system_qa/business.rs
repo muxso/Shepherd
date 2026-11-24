@@ -510,14 +510,12 @@ impl Business {
             .execute(&mut *tx)
             .await
             .map_err(storage)?;
-        let member: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM ms_project_member WHERE project_id=$1 AND user_id=$2)",
-        )
-        .bind(&context.project_id)
-        .bind(&context.user.user_id)
-        .fetch_one(&mut *tx)
-        .await
-        .map_err(storage)?;
+        let member: bool = sqlx::query_scalar("SELECT ms_has_project_access($1, $2, false)")
+            .bind(&context.project_id)
+            .bind(&context.user.user_id)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(storage)?;
         if !member && !context.user.can("SYSTEM_USER", "UPDATE") {
             return Err(RagError::Backend("当前账号不是该项目成员，不能查询项目业务数据。".into()));
         }

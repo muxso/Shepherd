@@ -1,11 +1,19 @@
 use async_trait::async_trait;
 
-use crate::domain::{Robot, RobotDraft, Rule, RuleDraft};
+use crate::domain::{NewNotice, ReportContext, Robot, RobotDraft, Rule, RuleDraft};
 use crate::ports::notice_store::RepoError;
 
 /// Persistence for notification robots and routing rules (project-scoped).
 #[async_trait]
 pub trait NoticeRuleStore: Send + Sync {
+    async fn report_base_url(&self) -> Option<String> {
+        None
+    }
+
+    async fn report_context(&self, _notice: &NewNotice) -> Option<ReportContext> {
+        None
+    }
+
     async fn insert_robot(&self, draft: &RobotDraft) -> Result<Robot, RepoError>;
 
     /// Updates the robot; None when the id doesn't exist in the draft's project.

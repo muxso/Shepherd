@@ -6,6 +6,16 @@ use async_trait::async_trait;
 use serde_json::Value;
 #[async_trait]
 pub trait Store: Send + Sync {
+    async fn save_sonar_analysis(
+        &self,
+        _source: &str,
+        _analysis: crate::domain::sonar::Analysis,
+    ) -> Result<Value, Error> {
+        Err(Error::NotFound)
+    }
+    async fn sonar_analyses(&self, _source: &str) -> Result<Value, Error> {
+        Err(Error::NotFound)
+    }
     async fn asset_export(&self, _source: &str) -> Result<Value, Error> {
         Err(Error::NotFound)
     }

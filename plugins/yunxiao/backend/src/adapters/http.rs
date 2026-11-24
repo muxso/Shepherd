@@ -35,6 +35,10 @@ impl FromRef<AppState> for Arc<dyn SessionStore> {
 }
 pub fn router(svc: Service, sessions: Arc<dyn SessionStore>) -> Router {
     Router::new()
+        .route(
+            "/api/devops/sources/{id}/sonar-analyses",
+            get(sonar_analyses).post(save_sonar_analysis),
+        )
         .route("/api/devops/sources/{id}/asset-export", get(asset_export))
         .route("/api/devops/sources/{id}/team-activity", get(team_activity))
         .route(
@@ -61,6 +65,32 @@ pub fn router(svc: Service, sessions: Arc<dyn SessionStore>) -> Router {
         .route("/api/devops/runs/{id}/complete", post(complete))
         .route("/api/devops/runs/{id}/fail", post(fail))
         .with_state(AppState { svc, sessions })
+}
+
+async fn sonar_analyses(
+    u: AuthUser,
+    State(s): State<AppState>,
+    Path(id): Path<String>,
+) -> Response {
+    if !can_read_devops(&u) || !u.can("PROJECT", "READ") {
+        return denied();
+    }
+    reply(s.svc.0.sonar_analyses(&id).await)
+}
+
+async fn save_sonar_analysis(
+    u: AuthUser,
+    State(s): State<AppState>,
+    Path(id): Path<String>,
+    Json(analysis): Json<crate::domain::sonar::Analysis>,
+) -> Response {
+    if !can_sync(&u) {
+        return denied();
+    }
+    if let Err(error) = analysis.validate() {
+        return reply(Err(error));
+    }
+    reply(s.svc.0.save_sonar_analysis(&id, analysis).await)
 }
 
 async fn asset_export(u: AuthUser, State(s): State<AppState>, Path(id): Path<String>) -> Response {
@@ -90,12 +120,15 @@ fn reply(v: Result<Value, Error>) -> Response {
 fn denied() -> Response {
     (StatusCode::FORBIDDEN, "permission denied").into_response()
 }
+fn can_read_devops(u: &AuthUser) -> bool {
+    u.can("DEVOPS", "READ")
+}
 fn can_sync(u: &AuthUser) -> bool {
-    u.can("DEVOPS", "SYNC") || u.can("PROJECT", "UPDATE")
+    u.can("DEVOPS", "SYNC")
 }
 #[utoipa::path(get,path="/api/devops/sources",tag="devops",responses((status=200,body=Value),(status=401),(status=403)),security(("bearer"=[])))]
 async fn sources(u: AuthUser, State(s): State<AppState>) -> Response {
-    if !u.can("PROJECT", "READ") {
+    if !can_read_devops(&u) {
         return denied();
     }
     reply(s.svc.0.sources().await)
@@ -106,7 +139,7 @@ async fn create_source(
     State(s): State<AppState>,
     Json(b): Json<NewSource>,
 ) -> Response {
-    if !u.can("PROJECT", "UPDATE") {
+    if !can_read_devops(&u) || !u.can("PROJECT", "UPDATE") {
         return denied();
     }
     if let Err(e) = b.validate() {
@@ -175,7 +208,7 @@ async fn bug_statistics(
     Path(id): Path<String>,
     Query(q): Query<crate::domain::bug_statistics::BugStatisticsQuery>,
 ) -> Response {
-    if !u.can("PROJECT", "READ") || !u.can("BUG", "READ") {
+    if !can_read_devops(&u) || !u.can("PROJECT", "READ") || !u.can("BUG", "READ") {
         return denied();
     }
     if let Err(error) = q.validate() {
@@ -190,7 +223,8 @@ async fn dashboard(
     Path(id): Path<String>,
     Query(q): Query<ListQuery>,
 ) -> Response {
-    if !u.can("PROJECT", "READ")
+    if !can_read_devops(&u)
+        || !u.can("PROJECT", "READ")
         || !u.can("REQUIREMENT", "READ")
         || !u.can("BUG", "READ")
         || !u.can("FUNCTIONAL_CASE", "READ")
@@ -206,7 +240,7 @@ async fn code_authors(
     Path(id): Path<String>,
     Query(q): Query<CodeAuthorsQuery>,
 ) -> Response {
-    if !u.can("PROJECT", "READ") {
+    if !can_read_devops(&u) {
         return denied();
     }
     if let Err(error) = q.bounds() {
@@ -233,7 +267,11 @@ async fn member_metrics(
     Path(id): Path<String>,
     Query(q): Query<MemberMetricsQuery>,
 ) -> Response {
-    if !u.can("PROJECT", "READ") || !u.can("REQUIREMENT", "READ") || !u.can("BUG", "READ") {
+    if !can_read_devops(&u)
+        || !u.can("PROJECT", "READ")
+        || !u.can("REQUIREMENT", "READ")
+        || !u.can("BUG", "READ")
+    {
         return denied();
     }
     if let Err(error) = q.validate() {
@@ -247,7 +285,7 @@ async fn requirement_output(
     State(s): State<AppState>,
     Query(q): Query<RequirementOutputQuery>,
 ) -> Response {
-    if !u.can("PROJECT", "READ") || !u.can("REQUIREMENT", "READ") {
+    if !can_read_devops(&u) || !u.can("PROJECT", "READ") || !u.can("REQUIREMENT", "READ") {
         return denied();
     }
     let result = s.svc.0.requirement_output(q).await.map(|mut result| {
@@ -277,12 +315,13 @@ async fn records(
         .or(q.kind.as_deref())
         .unwrap_or("requirement")
     {
-        "requirement" => "REQUIREMENT",
-        "bug" => "BUG",
+        "requirement" | "status-dwell-requirement" => "REQUIREMENT",
+        "bug" | "status-dwell-bug" => "BUG",
         "testcase" => "FUNCTIONAL_CASE",
         _ => "PROJECT",
     };
-    if !u.can("PROJECT", "READ")
+    if !can_read_devops(&u)
+        || !u.can("PROJECT", "READ")
         || !u.can(resource, "READ")
         || (q.metric.is_some_and(|metric| metric.record_kind() == "commit")
             && !u.can("REQUIREMENT", "READ"))
@@ -310,7 +349,7 @@ async fn activity_review_policy(
     State(s): State<AppState>,
     Path(id): Path<String>,
 ) -> Response {
-    if !u.can("PROJECT", "READ") {
+    if !can_read_devops(&u) || !u.can("PROJECT", "READ") {
         return denied();
     }
     reply(s.svc.0.activity_review_policy(&id).await.map(|mut value| {
@@ -325,7 +364,7 @@ async fn set_activity_review_policy(
     Path(id): Path<String>,
     Json(policy): Json<ActivityReviewPolicy>,
 ) -> Response {
-    if !u.can("PROJECT", "UPDATE") {
+    if !can_read_devops(&u) || !u.can("PROJECT", "UPDATE") {
         return denied();
     }
     match policy.validate() {
@@ -339,7 +378,7 @@ async fn author_identities(
     State(s): State<AppState>,
     Path(id): Path<String>,
 ) -> Response {
-    if !u.can("PROJECT", "READ") {
+    if !can_read_devops(&u) {
         return denied();
     }
     reply(s.svc.0.author_identities(&id).await.map(|mut value| {
@@ -354,7 +393,7 @@ async fn set_author_identities(
     Path(id): Path<String>,
     Json(config): Json<AuthorIdentities>,
 ) -> Response {
-    if !u.can("PROJECT", "UPDATE") {
+    if !can_read_devops(&u) || !u.can("PROJECT", "UPDATE") {
         return denied();
     }
     match config.normalize() {
@@ -374,7 +413,7 @@ async fn team_activity(
         bugs: u.can("BUG", "READ"),
         testcases: u.can("FUNCTIONAL_CASE", "READ"),
     };
-    if !u.can("PROJECT", "READ")
+    if !can_read_devops(&u)
         || q.role == ActivityRole::Product && !permissions.requirements
         || q.role == ActivityRole::Test && (!permissions.bugs || !permissions.testcases)
     {
@@ -391,7 +430,7 @@ async fn activity_members(
     State(s): State<AppState>,
     Path(id): Path<String>,
 ) -> Response {
-    if !u.can("PROJECT", "READ") {
+    if !can_read_devops(&u) {
         return denied();
     }
     reply(s.svc.0.activity_members(&id).await.map(|mut value| {
@@ -406,7 +445,7 @@ async fn set_activity_members(
     Path(id): Path<String>,
     Json(config): Json<ActivityMembers>,
 ) -> Response {
-    if !u.can("PROJECT", "UPDATE") {
+    if !can_read_devops(&u) || !u.can("PROJECT", "UPDATE") {
         return denied();
     }
     match config.normalize() {
@@ -529,7 +568,8 @@ mod tests {
         let token = sessions
             .create(
                 "product",
-                PermissionSet::from_raw(["PROJECT:READ", "REQUIREMENT:READ"]).expect("permissions"),
+                PermissionSet::from_raw(["DEVOPS:READ", "PROJECT:READ", "REQUIREMENT:READ"])
+                    .expect("permissions"),
                 3600,
             )
             .await
@@ -559,7 +599,11 @@ mod tests {
     async fn code_authors_redacts_requirement_names_at_http_boundary() {
         let sessions = Arc::new(InMemorySessionStore::new());
         let token = sessions
-            .create("reader", PermissionSet::from_raw(["PROJECT:READ"]).expect("perms"), 3600)
+            .create(
+                "reader",
+                PermissionSet::from_raw(["PROJECT:READ", "DEVOPS:READ"]).expect("perms"),
+                3600,
+            )
             .await
             .expect("session");
         let response = router(Service(Arc::new(Stub)), sessions)
@@ -583,7 +627,11 @@ mod tests {
     async fn activity_and_identity_configuration_require_their_own_permissions() {
         let sessions = Arc::new(InMemorySessionStore::new());
         let reader = sessions
-            .create("reader", PermissionSet::from_raw(["PROJECT:READ"]).expect("permissions"), 3600)
+            .create(
+                "reader",
+                PermissionSet::from_raw(["PROJECT:READ", "PROJECT:UPDATE"]).expect("permissions"),
+                3600,
+            )
             .await
             .expect("reader");
         let admin = sessions
@@ -592,6 +640,7 @@ mod tests {
                 PermissionSet::from_raw([
                     "PROJECT:READ",
                     "PROJECT:UPDATE",
+                    "DEVOPS:READ",
                     "REQUIREMENT:READ",
                     "BUG:READ",
                     "FUNCTIONAL_CASE:READ",
@@ -607,13 +656,15 @@ mod tests {
             .expect("sync");
         let app = router(Service(Arc::new(Stub)), sessions);
         for (method, path, token, body, expected) in [
+            ("GET", "/api/devops/sources", Some(reader.as_str()), "", 403),
+            ("POST", "/api/devops/sources/s/runs", Some(reader.as_str()), "", 403),
             ("GET", "/api/devops/sources/s/team-activity?role=code&days=7", None, "", 401),
             (
                 "GET",
                 "/api/devops/sources/s/team-activity?role=code&days=7",
                 Some(reader.as_str()),
                 "",
-                200,
+                403,
             ),
             (
                 "GET",
@@ -648,7 +699,7 @@ mod tests {
                 "/api/devops/sources/s/activity-review-policy",
                 Some(reader.as_str()),
                 r#""#,
-                200,
+                403,
             ),
             (
                 "PUT",
@@ -688,8 +739,8 @@ mod tests {
                 "",
                 400,
             ),
-            ("GET", "/api/devops/sources/s/author-identities", Some(reader.as_str()), "", 200),
-            ("GET", "/api/devops/sources/s/activity-members", Some(reader.as_str()), "", 200),
+            ("GET", "/api/devops/sources/s/author-identities", Some(reader.as_str()), "", 403),
+            ("GET", "/api/devops/sources/s/activity-members", Some(reader.as_str()), "", 403),
             (
                 "PUT",
                 "/api/devops/sources/s/author-identities",
@@ -770,18 +821,39 @@ mod tests {
         let metrics = sessions
             .create(
                 "metrics",
-                PermissionSet::from_raw(["PROJECT:READ", "REQUIREMENT:READ", "BUG:READ"])
-                    .expect("perms"),
+                PermissionSet::from_raw([
+                    "DEVOPS:READ",
+                    "PROJECT:READ",
+                    "REQUIREMENT:READ",
+                    "BUG:READ",
+                ])
+                .expect("perms"),
+                3600,
+            )
+            .await
+            .expect("session");
+        let resource_reader = sessions
+            .create(
+                "resource-reader",
+                PermissionSet::from_raw([
+                    "PROJECT:READ",
+                    "REQUIREMENT:READ",
+                    "BUG:READ",
+                    "FUNCTIONAL_CASE:READ",
+                ])
+                .expect("perms"),
                 3600,
             )
             .await
             .expect("session");
         let app = router(Service(Arc::new(Stub)), sessions);
         for (method, path, token, expected) in [
+            ("GET", "/api/devops/sources/source/dashboard", Some(resource_reader.as_str()), 403),
+            ("GET", "/api/devops/sources/source/code-authors?month=2026-11", Some(resource_reader.as_str()), 403),
             ("GET", "/api/devops/sources/source/code-authors?month=2026-11", None, 401),
             ("GET", "/api/devops/sources/source/code-authors?month=2026-11", Some(sync.as_str()), 403),
-            ("GET", "/api/devops/sources/source/code-authors?month=2026-13", Some(read.as_str()), 400),
-            ("GET", "/api/devops/sources/source/code-authors?month=2026-11", Some(read.as_str()), 200),
+            ("GET", "/api/devops/sources/source/code-authors?month=2026-13", Some(metrics.as_str()), 400),
+            ("GET", "/api/devops/sources/source/code-authors?month=2026-11", Some(read.as_str()), 403),
             ("GET", "/api/devops/sources/source/member-metrics?month=2026-10",Some(metrics.as_str()),200),
             ("GET", "/api/devops/sources/source/member-metrics?month=2026-13",Some(metrics.as_str()),400),
             ("GET", "/api/devops/sources/source/member-metrics?requirementTarget=0",Some(metrics.as_str()),400),
@@ -790,7 +862,8 @@ mod tests {
             ("GET", "/api/devops/sources/source/member-metrics?month=2026-10", Some(read.as_str()), 403),
             ("GET", "/api/devops/requirement-output?projectId=p&reference=REQ-42", None, 401),
             ("GET", "/api/devops/requirement-output?projectId=p&reference=REQ-42", Some(read.as_str()), 403),
-            ("GET", "/api/devops/sources", Some(read.as_str()), 200),
+            ("GET", "/api/devops/sources", Some(read.as_str()), 403),
+            ("GET", "/api/devops/sources", Some(metrics.as_str()), 200),
             ("POST", "/api/devops/sources/source/runs", Some(read.as_str()), 403),
             ("POST", "/api/devops/sources/source/runs", Some(sync.as_str()), 200),
             ("GET", "/api/devops/sources/source/dashboard", Some(read.as_str()), 403),

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Button, Card, Col, Empty, Progress, Row, Select, Spin, Statistic, Table, Tag, Tooltip, Segmented } from 'antd'
+import { Button, Card, Col, Empty, Progress, Row, Select, Statistic, Table, Tag, Tooltip, Segmented } from 'antd'
 import {
   ApiOutlined,
   PartitionOutlined,
@@ -42,15 +42,44 @@ interface Counts {
   bug: number
 }
 
+const HOME_CACHE_MS = 30_000
+const homeRequests = new Map<string, { expiresAt: number; result: Promise<unknown> }>()
+let homeSession = ''
+
+function homeRequest<T>(session: string, projectId: string, metric: string, load: () => Promise<T>): Promise<T> {
+  if (homeSession !== session) {
+    homeRequests.clear()
+    homeSession = session
+  }
+  const key = `${projectId}:${metric}`
+  const cached = homeRequests.get(key)
+  if (cached && cached.expiresAt > Date.now()) return cached.result as Promise<T>
+  const entry = {
+    expiresAt: Infinity,
+    result: Promise.resolve().then(load).then(data => {
+      entry.expiresAt = Date.now() + HOME_CACHE_MS
+      return data
+    }).catch(error => {
+      if (homeRequests.get(key) === entry) homeRequests.delete(key)
+      throw error
+    }),
+  }
+  for (const [cachedKey, item] of homeRequests) {
+    if (item.expiresAt <= Date.now()) homeRequests.delete(cachedKey)
+  }
+  homeRequests.set(key, entry)
+  return entry.result
+}
+
 // Muted palette shared by all Home charts: reduced alpha so large areas aren't glaring saturated primaries.
 const C = {
   blue: 'rgba(var(--brand-rgb), 0.72)',
   skyblue: 'rgba(22, 119, 255, 0.68)',
   cyan: 'rgba(19, 194, 194, 0.68)',
-  green: 'rgba(82, 196, 26, 0.68)',
+  green: 'var(--success)',
   orange: 'rgba(250, 140, 22, 0.75)',
   pink: 'rgba(235, 47, 150, 0.72)',
-  red: 'rgba(245, 34, 45, 0.72)',
+  red: 'var(--error)',
   grey: '#8a9099',
   human: 'rgba(255, 154, 46, 0.8)',
 }
@@ -118,10 +147,10 @@ export default function Home() {
 }
 
 function ProjectHome() {
-  const { projectId, projects } = useApp()
+  const { projectId, projects, token } = useApp()
   const { t } = useI18n()
   const navigate = useScopedNavigate()
-  const [c, setC] = useState<Counts | null>(null)
+  const [c, setC] = useState<Partial<Counts>>({})
   const [defs, setDefs] = useState<ApiDefinition[]>([])
   const [cases, setCases] = useState<ApiCase[]>([])
   const [projRows, setProjRows] = useState<BarRow[]>([])
@@ -129,7 +158,6 @@ function ProjectHome() {
   const [trend, setTrend] = useState<ExecTrendPoint[]>([])
   const [collab, setCollab] = useState<CollabStats | null>(null)
   const [collabMetric, setCollabMetric] = useState<'total' | 'ai' | 'human'>('total')
-  const [loading, setLoading] = useState(false)
   const [layout, setLayout] = useState<CardLayout[]>(loadLayout)
   const [editing, setEditing] = useState(false)
   // Plan-overview card: selected plan + its stats/linked-case count + project bugs (fetched only while the card is in the layout).
@@ -141,6 +169,7 @@ function ProjectHome() {
   // API-changes card: reference counts (cases/scenarios) for recent definitions.
   const [refCounts, setRefCounts] = useState<Record<string, { cases: number; scenarios: number }>>({})
 
+  const hasProjectComparison = layout.some(p => p.key === 'projectBars')
   const hasPlanCard = layout.some((p) => p.key === 'planOverview')
   const hasApiChangesCard = layout.some((p) => p.key === 'apiChanges')
   const planSelKey = `shepherd.home.planOverview.${projectId}`
@@ -151,42 +180,38 @@ function ProjectHome() {
   }
 
   useEffect(() => {
-    if (!projectId) {
-      setC(null)
-      setExec(null)
-      setTrend([])
-      setCollab(null)
-      setPlanItems([])
-      return
+    if (!projectId) return
+    let live = true
+    const update = (counts: Partial<Counts>) => {
+      if (live) setC(current => ({ ...current, ...counts }))
     }
-    api.caseExecSummary(projectId).then(setExec).catch(() => setExec(null))
-    api.collabStats(projectId).then(setCollab).catch(() => setCollab(null))
-    api.execTrend(projectId, TREND_DAYS).then((t) => setTrend(Array.isArray(t) ? t : [])).catch(() => setTrend([]))
-    setLoading(true)
-    Promise.all([
-      api.definitions(projectId).catch(() => [] as ApiDefinition[]),
-      api.scenarios(projectId).then((d) => d.length).catch(() => 0),
-      api.projectCases(projectId).then((p) => ({ total: p.total ?? p.items.length, items: p.items ?? [] })).catch(() => ({ total: 0, items: [] as ApiCase[] })),
-      api.functionalCases(projectId).then((d) => d.length).catch(() => 0),
-      fetchPlanItems(projectId).catch(() => [] as RegItem[]),
-    ])
-      .then(([defList, scenario, casePage, funcCase, plans]) => {
-        const dl = Array.isArray(defList) ? defList : []
-        setDefs(dl)
-        setCases(casePage.items)
-        setPlanItems(plans)
-        setC({
-          def: dl.length,
-          scenario,
-          apiCase: casePage.total,
-          funcCase,
-          plan: plans.length,
-          req: regList('requirement', projectId).length,
-          bug: regList('bug', projectId).length,
-        })
-      })
-      .finally(() => setLoading(false))
-  }, [projectId])
+    const load = <T,>(key: string, fetch: () => Promise<T>, apply: (data: T) => void) => {
+      void homeRequest(token, projectId, key, fetch).then(data => {
+        if (live) apply(data)
+      }).catch(() => undefined)
+    }
+
+    update({ req: regList('requirement', projectId).length, bug: regList('bug', projectId).length })
+    load('definitions', () => api.definitions(projectId), definitions => {
+      setDefs(definitions)
+      update({ def: definitions.length })
+    })
+    load('scenarios', () => api.scenarios(projectId).then(list => list.length), scenario => update({ scenario }))
+    load('cases', () => api.projectCases(projectId), page => {
+      setCases(page.items)
+      update({ apiCase: page.total ?? page.items.length })
+    })
+    load('functionalCount', () => api.functionalCaseCount(projectId), funcCase => update({ funcCase }))
+    load('plans', () => fetchPlanItems(projectId), plans => {
+      setPlanItems(plans)
+      update({ plan: plans.length })
+    })
+    load('execution', () => api.caseExecSummary(projectId), setExec)
+    load('collaboration', () => api.collabStats(projectId), setCollab)
+    load('trend', () => api.execTrend(projectId, TREND_DAYS), points => setTrend(Array.isArray(points) ? points : []))
+
+    return () => { live = false }
+  }, [projectId, token])
 
   // Protocol distribution + coverage: definitions grouped by protocol; a definition referenced by any case counts as covered.
   const protocolSegs = useMemo(() => {
@@ -217,21 +242,30 @@ function ProjectHome() {
 
   // Project comparison: fetch the four asset counts per project concurrently (independent of the selected project).
   useEffect(() => {
-    if (!projects.length) { setProjRows([]); return }
+    if (!hasProjectComparison || !projects.length) return
     let alive = true
-    Promise.all(
-      projects.map(async (p) => {
-        const [def, scenario, apiCase, funcCase] = await Promise.all([
-          api.definitions(p.id).then((d) => d.length).catch(() => 0),
-          api.scenarios(p.id).then((d) => d.length).catch(() => 0),
-          api.projectCases(p.id).then((x) => x.total ?? x.items.length).catch(() => 0),
-          api.functionalCases(p.id).then((d) => d.length).catch(() => 0),
+    const ordered = [...projects].sort((a, b) => Number(b.id === projectId) - Number(a.id === projectId))
+    const timer = window.setTimeout(async () => {
+      for (const project of ordered) {
+        if (!alive) return
+        const { id, name } = project
+        const counts = await Promise.allSettled([
+          homeRequest(token, id, 'definitions', () => api.definitions(id)).then(list => list.length),
+          homeRequest(token, id, 'scenarios', () => api.scenarios(id).then(list => list.length)),
+          id === projectId
+            ? homeRequest(token, id, 'cases', () => api.projectCases(id)).then(page => page.total ?? page.items.length)
+            : homeRequest(token, id, 'caseCount', () => api.projectCases(id, 1).then(page => page.total ?? page.items.length)),
+          homeRequest(token, id, 'functionalCount', () => api.functionalCaseCount(id)),
         ])
-        return { name: p.name, values: { def, scenario, apiCase, funcCase } } as BarRow
-      }),
-    ).then((rows) => { if (alive) setProjRows(rows) })
-    return () => { alive = false }
-  }, [projects])
+        if (!alive) return
+        if (counts.some(count => count.status === 'rejected')) continue
+        const [def, scenario, apiCase, funcCase] = counts.map(count => count.status === 'fulfilled' ? count.value : 0)
+        setProjRows(rows => [...rows, { name, values: { def, scenario, apiCase, funcCase } }])
+      }
+    }, 300)
+    setProjRows([])
+    return () => { alive = false; window.clearTimeout(timer) }
+  }, [projects, projectId, token, hasProjectComparison])
 
   // Plan overview: plan list (groups excluded), persisted selection, stats + linked cases, project bugs.
   const planList = useMemo(() => planItems.filter((p) => !isGroup(p)), [planItems])
@@ -292,13 +326,13 @@ function ProjectHome() {
 
   const cards = useMemo(
     () => [
-      { key: 'def', label: t('home.def', '接口定义'), value: c?.def ?? 0, icon: <ApiOutlined />, color: C.blue, to: '/api/definition' },
-      { key: 'scenario', label: t('home.scenario', '场景用例'), value: c?.scenario ?? 0, icon: <PartitionOutlined />, color: C.skyblue, to: '/api/scenario' },
-      { key: 'apiCase', label: t('home.apiCase', '接口用例'), value: c?.apiCase ?? 0, icon: <ProfileOutlined />, color: C.cyan, to: '/api/definition' },
-      { key: 'funcCase', label: t('home.funcCase', '功能用例'), value: c?.funcCase ?? 0, icon: <ProfileOutlined />, color: C.green, to: '/functional-case' },
-      { key: 'plan', label: t('home.plan', '测试计划'), value: c?.plan ?? 0, icon: <ScheduleOutlined />, color: C.orange, to: '/test-plan' },
-      { key: 'req', label: t('home.req', '需求'), value: c?.req ?? 0, icon: <FileTextOutlined />, color: C.pink, to: '/requirement' },
-      { key: 'bug', label: t('home.bug', '缺陷'), value: c?.bug ?? 0, icon: <BugOutlined />, color: C.red, to: '/bug' },
+      { key: 'def', label: t('home.def', '接口定义'), value: c?.def ?? '—', icon: <ApiOutlined />, color: C.blue, to: '/api/definition' },
+      { key: 'scenario', label: t('home.scenario', '场景用例'), value: c?.scenario ?? '—', icon: <PartitionOutlined />, color: C.skyblue, to: '/api/scenario' },
+      { key: 'apiCase', label: t('home.apiCase', '接口用例'), value: c?.apiCase ?? '—', icon: <ProfileOutlined />, color: C.cyan, to: '/api/definition' },
+      { key: 'funcCase', label: t('home.funcCase', '功能用例'), value: c?.funcCase ?? '—', icon: <ProfileOutlined />, color: C.green, to: '/functional-case' },
+      { key: 'plan', label: t('home.plan', '测试计划'), value: c?.plan ?? '—', icon: <ScheduleOutlined />, color: C.orange, to: '/test-plan' },
+      { key: 'req', label: t('home.req', '需求'), value: c?.req ?? '—', icon: <FileTextOutlined />, color: C.pink, to: '/requirement' },
+      { key: 'bug', label: t('home.bug', '缺陷'), value: c?.bug ?? '—', icon: <BugOutlined />, color: C.red, to: '/bug' },
     ],
     [c, t],
   )
@@ -597,8 +631,8 @@ function ProjectHome() {
               <GroupedBars
                 height={220}
                 series={[
-                  { key: 'passed', label: t('home.passed', '已通过'), color: C.green },
-                  { key: 'failed', label: t('home.failedExec', '未通过'), color: C.red },
+                  { key: 'passed', label: t('home.passed', '已通过'), color: C.green, gradientEnd: 'var(--success-soft)' },
+                  { key: 'failed', label: t('home.failedExec', '未通过'), color: C.red, gradientEnd: 'var(--error-soft)' },
                 ]}
                 rows={trendRows}
               />
@@ -880,19 +914,17 @@ function ProjectHome() {
       <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
         <Button size="small" icon={<SettingOutlined />} onClick={() => setEditing(true)}>{t('home.cs.edit', '编辑')}</Button>
       </div>
-      <Spin spinning={loading}>
-        {layout.length === 0 ? (
-          <Empty description={t('home.cs.empty', '暂无卡片,点击右上角「编辑」添加')} />
-        ) : (
-          <Row gutter={16} className="ms-home-grid">
-            {layout.map((p) => (
-              <Col key={p.key} xs={24} lg={p.size === 'full' ? 24 : 12}>
-                {renderCard(p.key)}
-              </Col>
-            ))}
-          </Row>
-        )}
-      </Spin>
+      {layout.length === 0 ? (
+        <Empty description={t('home.cs.empty', '暂无卡片,点击右上角「编辑」添加')} />
+      ) : (
+        <Row gutter={16} className="ms-home-grid ms-summary-motion">
+          {layout.map((p) => (
+            <Col key={p.key} xs={24} lg={p.size === 'full' ? 24 : 12}>
+              {renderCard(p.key)}
+            </Col>
+          ))}
+        </Row>
+      )}
       <PluginHomeExtensions projectId={projectId} />
       {editing && (
         <CardSettings

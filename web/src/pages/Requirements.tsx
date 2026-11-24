@@ -21,7 +21,7 @@ import {
   type DeliveryAttempt,
   type DeliveryEvent,
   type FleetRuntime,
-  type FunctionalCase,
+  type FunctionalCaseOption,
   type User,
   type Requirement,
   type RequirementChange,
@@ -144,6 +144,7 @@ export default function Requirements() {
   const { projectId } = useApp()
   const [items, setItems] = useState<ReqRow[]>([])
   const activeProject=useRef(projectId);activeProject.current=projectId
+  const listRequest = useRef(0)
   // Shared project module tree (same tree as scenarios/cases): left panel + module column/filter.
   const [modules, setModules] = useState<ApiModule[]>([])
   const [selModule, setSelModule] = useState('ALL') // ALL | UNFILED | <moduleId>
@@ -164,30 +165,45 @@ export default function Requirements() {
 
   // Backend is the source of truth (includes requirements created via CLI/API), overlaid with local registry meta (decomposition/verification links).
   const loadList = async () => {
+    const requestId = ++listRequest.current
     const local = regList('requirement', projectId)
-    const localById = new Map(local.map((r) => [r.id, r]))
-    try {
-      // One compact coverage summary per project, independent of requirement count.
-      const [page, covMap, reviews] = await Promise.all([
-        api.requirements(projectId),
-        api.projectRequirementCoverage(projectId).catch(() => ({} as Record<string, number[]>)),
-        request<{items:ReviewMeta[]}>('GET','/rag/impact-reviews?'+new URLSearchParams({projectId})).catch(()=>({items:[]})),
-      ])
-      if(activeProject.current!==projectId)return
-      const reviewById=new Map(reviews.items.map(r=>[r.requirementId,r]))
-      setItems(page.items.map((r) => {
+    const localById = new Map(local.map(r => [r.id, r]))
+    const isCurrent = () => activeProject.current === projectId && listRequest.current === requestId
+    let rows: Requirement[] | undefined
+    let coverage: Record<string, number[]> | undefined
+    let reviewById = new Map<string, ReviewMeta>()
+
+    const renderRows = () => {
+      if (!isCurrent() || !rows) return
+      setItems(rows.map(r => {
         const crits = critsOf(r)
-        const covered = crits.filter((_, i) => (covMap[r.id] || []).includes(i)).length
-        const pct = crits.length ? Math.round((covered / crits.length) * 100) : 0
-        const base = localById.get(r.id) || { id: r.id, label: r.title, createdAt: 0 }
-        const label = (
-          <span>{r.title}{crits.length ? <Tag color={pct === 100 ? 'green' : pct > 0 ? 'gold' : 'default'} style={{ marginLeft: 6 }}>{pct}%</Tag> : null}</span>
-        )
-        return { ...base, reviewMeta:reviewById.get(r.id),status: r.status, reqType: r.reqType, priority: r.priority, tags: r.tags, overdue: r.overdue, label, titleText: r.title, raw: r }
+        const covered = crits.filter((_, i) => (coverage?.[r.id] ?? []).includes(i)).length
+        const pct = crits.length ? Math.round(100 * covered / crits.length) : 0
+        const base = localById.get(r.id) ?? { id: r.id, label: r.title, createdAt: 0 }
+        const label = <span>{r.title}{coverage && crits.length > 0 &&
+          <Tag color={pct === 100 ? 'green' : pct > 0 ? 'gold' : 'default'} style={{ marginLeft: 6 }}>{pct}%</Tag>}</span>
+        return { ...base, reviewMeta: reviewById.get(r.id), status: r.status, reqType: r.reqType, priority: r.priority, tags: r.tags, overdue: r.overdue, label, titleText: r.title, raw: r }
       }))
-    } catch {
-      setItems(local.map((r) => ({ ...r, titleText: String(r.label) }))) // backend unavailable: fall back to local registry
     }
+    const coverageLoad = api.projectRequirementCoverage(projectId).then(value => {
+      coverage = value
+      renderRows()
+    }).catch(() => {})
+    const reviewsLoad = request<{ items: ReviewMeta[] }>('GET', '/rag/impact-reviews?' + new URLSearchParams({ projectId })).then(value => {
+      reviewById = new Map(value.items.map(review => [review.requirementId, review]))
+      renderRows()
+    }).catch(() => {})
+    try {
+      const page = await api.requirements(projectId, first => {
+        rows = first.items
+        renderRows()
+      })
+      rows = page.items
+      renderRows()
+    } catch {
+      if (isCurrent() && !rows) setItems(local.map(r => ({ ...r, titleText: String(r.label) })))
+    }
+    await Promise.all([coverageLoad, reviewsLoad])
   }
   useEffect(() => {
     loadList()
@@ -630,11 +646,11 @@ function CreateRequirementForm({ projectId, modules, defaultModuleId, onDone }: 
 function RequirementCoveragePanel({ reqId, projectId, criteria }: { reqId: string; projectId: string; criteria: string[] }) {
   const { t } = useI18n()
   const [cov, setCov] = useState<CoverageCase[]>([])
-  const [cases, setCases] = useState<FunctionalCase[]>([])
+  const [cases, setCases] = useState<FunctionalCaseOption[]>([])
   const load = () => api.requirementCoverage(reqId).then(setCov).catch(() => setCov([]))
   useEffect(() => {
     load()
-    api.functionalCases(projectId).then(setCases).catch(() => undefined)
+    api.functionalCaseOptions(projectId).then(setCases).catch(() => undefined)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reqId, projectId])
   const byIdx = (i: number) => cov.filter((c) => c.criterionIndex === i)
@@ -1249,8 +1265,8 @@ function CollabPanel({ projectId, reqId, refreshKey }: { projectId: string; reqI
             label={t('req.attemptsStat', '交付尝试(成功 / 失败)')}
             left={row.aiDelivered}
             right={row.aiFailed}
-            leftColor="#52c41a"
-            rightColor="#ff4d4f"
+            leftColor="var(--success)"
+            rightColor="var(--error)"
           />
         </Col>
         <Col xs={12} sm={12} md={6} lg={4}>
@@ -1259,7 +1275,7 @@ function CollabPanel({ projectId, reqId, refreshKey }: { projectId: string; reqI
             size={72}
             percent={row.aiTasks > 0 ? Math.round(firstPassRate) : 0}
             format={() => (row.aiTasks > 0 ? `${firstPassRate.toFixed(0)}%` : '—')}
-            strokeColor="#52c41a"
+            strokeColor="var(--success)"
           />
           <div style={{ marginTop: 6, fontSize: 12, color: 'var(--text-2)' }}>{t('req.firstPass', '一次交付通过率')}</div>
         </Col>

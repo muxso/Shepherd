@@ -10,6 +10,7 @@ import {
   type ApiCase,
   type ApiDefinition,
   type CaseExecution,
+  type Environment,
   type ResourcePool,
   type RunMode,
 } from '../api'
@@ -17,7 +18,11 @@ import { methodColor, outcomeColor, execStatusLabel, caseStatusLabel } from '../
 import CaseEditorDrawer from '../components/CaseEditorDrawer'
 import { useI18n } from '../i18n'
 
-export default function CasesPanel({ definition, refreshToken }: { definition: ApiDefinition; refreshToken?: number }) {
+export default function CasesPanel({ definition, refreshToken, onOpenCase }: {
+  definition: ApiDefinition
+  refreshToken?: number
+  onOpenCase: (item: ApiCase, edit?: boolean) => void
+}) {
   const { t } = useI18n()
   const [cases, setCases] = useState<ApiCase[]>([])
   const [loading, setLoading] = useState(false)
@@ -84,7 +89,16 @@ export default function CasesPanel({ definition, refreshToken }: { definition: A
         locale={{ emptyText: <Empty description={t('case.emptyCases', '暂无用例')} /> }}
         pagination={false}
         columns={[
-          { title: t('case.colName', '名称'), dataIndex: 'name', ellipsis: true },
+          {
+            title: t('case.colName', '名称'),
+            dataIndex: 'name',
+            ellipsis: true,
+            render: (name: string, item: ApiCase) => (
+              <Button type="link" size="small" title={name}
+                style={{ maxWidth: '100%', paddingInline: 0, display: 'inline-block', overflow: 'hidden', textOverflow: 'ellipsis' }}
+                onClick={() => onOpenCase(item)}>{name || item.id.slice(0, 8)}</Button>
+            ),
+          },
           {
             title: t('case.colPriority', '优先级'),
             dataIndex: 'priority',
@@ -117,9 +131,10 @@ export default function CasesPanel({ definition, refreshToken }: { definition: A
           },
           {
             title: t('case.colActions', '操作'),
-            width: 200,
+            width: 250,
             render: (_: unknown, c: ApiCase) => (
-              <Space>
+              <Space size={4}>
+                <Button type="link" size="small" onClick={() => onOpenCase(c, true)}>{t('a.edit', '编辑')}</Button>
                 <Tooltip title={followedIds.has(c.id) ? t('follow.unfollow', '取消关注') : t('follow.follow', '关注')}>
                   <Button
                     type="text"
@@ -181,6 +196,16 @@ function RunModal({
   const [mode, setMode] = useState<RunMode>('PARALLEL')
   const [running, setRunning] = useState(false)
   const [newPool, setNewPool] = useState('')
+  const [environmentId, setEnvironmentId] = useState<string>()
+  const [environments, setEnvironments] = useState<Environment[]>([])
+  const scripted = Array.isArray(caseItem?.processors) && caseItem.processors.some(processor => processor?.type === 'SandboxScript')
+  useEffect(() => {
+    if (!scripted) return
+    let live = true
+    setEnvironmentId(undefined)
+    api.environments(projectId).then(rows => { if (live) setEnvironments(rows.filter(row => row.enabled !== false)) }).catch(() => {})
+    return () => { live = false }
+  }, [scripted, projectId])
 
   const loadPools = async () => {
     try {
@@ -193,7 +218,7 @@ function RunModal({
   }
 
   useEffect(() => {
-    if (caseItem) loadPools()
+    if (caseItem && !scripted) loadPools()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [caseItem])
 
@@ -214,7 +239,8 @@ function RunModal({
     if (!caseItem) return
     setRunning(true)
     try {
-      const r = await api.runCase(caseItem.id, projectId, mode, poolId || undefined)
+      const r = scripted ? await api.runScriptedCase(caseItem.id, projectId, environmentId)
+        : await api.runCase(caseItem.id, projectId, mode, poolId || undefined)
       message.success(`${t('case.executed', '已执行')}:${r.status}(${t('case.report', '报告')} ${r.reportId.slice(0, 8)})`)
       onDone()
     } catch (e) {
@@ -232,9 +258,13 @@ function RunModal({
       onOk={run}
       okText={t('a.run', '运行')}
       confirmLoading={running}
-      okButtonProps={{ disabled: !poolId }}
+      okButtonProps={{ disabled: !scripted && !poolId }}
     >
-      <Form layout="vertical">
+      {scripted ? <Form layout="vertical">
+        <Typography.Paragraph>通过服务端沙箱执行脚本。相对 URL 需要配置执行环境。</Typography.Paragraph>
+        <Form.Item label="执行环境"><Select aria-label="执行环境" allowClear value={environmentId} onChange={setEnvironmentId}
+          options={environments.map(row => ({ value: row.id, label: row.name }))} /></Form.Item>
+      </Form> : <Form layout="vertical">
         <Form.Item label={t('case.runMode', '运行模式')}>
           <Select
             value={mode}
@@ -269,7 +299,7 @@ function RunModal({
             )}
           />
         </Form.Item>
-      </Form>
+      </Form>}
     </EditDrawer>
   )
 }

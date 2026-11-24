@@ -5,7 +5,7 @@ import { PlusOutlined, ReloadOutlined, MergeCellsOutlined } from '@ant-design/ic
 import { api, ApiError, type Skill } from '../api'
 import { useApp } from '../context'
 import { useI18n } from '../i18n'
-import { PageBody, PageContainer, PageHeader, SelectProjectEmpty } from '../components/Page'
+import { AccessDenied, PageBody, PageContainer, PageHeader, SelectProjectEmpty } from '../components/Page'
 import { useListView, type ListColumn } from '../components/ListView'
 import EditDrawer from '../components/EditDrawer'
 import { MarkdownEditor } from '../components/MarkdownEditor'
@@ -14,6 +14,7 @@ export default function Skills() {
   const { t } = useI18n()
   const { projectId } = useApp()
   const [items, setItems] = useState<Skill[]>([])
+  const [denied, setDenied] = useState<{ projectId: string; reason: 'membership' | 'permission' }>()
   const [loading, setLoading] = useState(false)
   const [createOpen, setCreateOpen] = useState(false)
   const [composeOpen, setComposeOpen] = useState(false)
@@ -24,9 +25,20 @@ export default function Skills() {
     setLoading(true)
     try {
       const ss = await api.skills(projectId)
+      setDenied(undefined)
       setItems(Array.isArray(ss) ? ss : [])
     } catch (e) {
-      message.error(e instanceof ApiError ? e.message : t('skill.loadFailed', '加载技能失败'))
+      setItems([])
+      if (e instanceof ApiError && e.status === 403) {
+        let reason: 'membership' | 'permission' = 'permission'
+        try {
+          if (JSON.parse(e.responseText)?.detail === '当前账号不能访问此项目的技能') reason = 'membership'
+        } catch {
+          reason = 'permission'
+        }
+        setDenied({ projectId, reason })
+      }
+      else message.error(t('skill.loadFailed', '加载技能失败'))
     } finally {
       setLoading(false)
     }
@@ -48,6 +60,11 @@ export default function Skills() {
   })
 
   if (!projectId) return <SelectProjectEmpty />
+  if (denied?.projectId === projectId) return <PageContainer><PageBody>
+    <Card size="small"><AccessDenied description={denied.reason === 'membership'
+      ? t('skill.projectMembershipRequired', '请联系项目管理员将你的账号加入此项目。')
+      : t('skill.queryPermissionRequired', '请联系管理员核对「技能 · 查询」权限。')} /></Card>
+  </PageBody></PageContainer>
 
   return <SkillsList items={items} loading={loading} projectId={projectId} refresh={refresh} createOpen={createOpen} setCreateOpen={setCreateOpen} composeOpen={composeOpen} setComposeOpen={setComposeOpen} edit={edit} setEdit={setEdit} del={del} t={t} />
 }

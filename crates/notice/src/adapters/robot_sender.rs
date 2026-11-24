@@ -10,7 +10,7 @@ use hmac::{Hmac, Mac};
 use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
 use sha2::Sha256;
 
-use crate::domain::{Platform, Robot};
+use crate::domain::{Platform, ReportCard, Robot};
 use crate::ports::{RobotDelivery, RobotSender};
 
 #[derive(Clone)]
@@ -73,19 +73,95 @@ fn target_url(robot: &Robot) -> String {
 #[async_trait]
 impl RobotSender for ReqwestRobotSender {
     async fn send(&self, robot: &Robot, text: &str) -> Result<RobotDelivery, String> {
-        let resp = self
-            .client
-            .post(target_url(robot))
-            .json(&payload(robot.platform, text))
-            .send()
-            .await
-            .map_err(|e| e.to_string())?;
-        let status = resp.status().as_u16();
-        let body = resp.text().await.unwrap_or_default();
-        // Robot APIs cap error bodies well below this; truncate just in case.
-        let body = body.chars().take(500).collect();
-        Ok(RobotDelivery { status, body })
+        self.post(robot, &payload(robot.platform, text)).await
     }
+
+    async fn send_report(
+        &self,
+        robot: &Robot,
+        text: &str,
+        report: &ReportCard,
+    ) -> Result<RobotDelivery, String> {
+        if robot.platform != Platform::Wecom {
+            return self.send(robot, text).await;
+        }
+        let Some(card) = report_card_payload(report) else {
+            return self.send(robot, text).await;
+        };
+        self.post(robot, &card).await
+    }
+}
+
+impl ReqwestRobotSender {
+    async fn post(
+        &self,
+        robot: &Robot,
+        payload: &serde_json::Value,
+    ) -> Result<RobotDelivery, String> {
+        let response =
+            self.client.post(target_url(robot)).json(payload).send().await.map_err(|e| {
+                if e.is_timeout() {
+                    "robot webhook timed out"
+                } else {
+                    "robot webhook request failed"
+                }
+                .to_string()
+            })?;
+        let status = response.status().as_u16();
+        let body = response.text().await.unwrap_or_default();
+        if let Ok(value) = serde_json::from_str::<serde_json::Value>(&body) {
+            if let Some(code) = value
+                .get("errcode")
+                .or_else(|| value.get("code"))
+                .and_then(|value| value.as_i64())
+                .filter(|code| *code != 0)
+            {
+                return Err(format!("robot API rejected message: code {code}"));
+            }
+        }
+        Ok(RobotDelivery { status, body: body.chars().take(500).collect() })
+    }
+}
+
+fn report_card_payload(report: &ReportCard) -> Option<serde_json::Value> {
+    let url = reqwest::Url::parse(&report.url).ok()?;
+    if !matches!(url.scheme(), "http" | "https")
+        || !url.username().is_empty()
+        || url.password().is_some()
+    {
+        return None;
+    }
+    let mut rows = Vec::new();
+    if let Some(counts) = report.counts {
+        for (label, count) in ["总数", "通过", "失败"].into_iter().zip(counts) {
+            rows.push(serde_json::json!({"keyname": label, "value": count.to_string()}));
+        }
+    }
+    if !report.operator.is_empty() {
+        rows.push(serde_json::json!({"keyname": "执行人", "value": report.operator.chars().take(30).collect::<String>()}));
+    }
+    rows.push(serde_json::json!({"keyname": "时间", "value": report.time}));
+    let title: String =
+        report.title.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(36).collect();
+    let project: String = report.project.chars().take(25).collect();
+    let source = if project.is_empty() { "测试报告" } else { &project };
+    let summary = if report.template_summary.is_empty() {
+        report.details.join("\n")
+    } else {
+        report.template_summary.clone()
+    };
+    Some(serde_json::json!({
+        "msgtype": "template_card",
+        "template_card": {
+            "card_type": "text_notice",
+            "source": {"desc": source, "desc_color": if report.failed { 2 } else { 3 }},
+            "main_title": {"title": title, "desc": report.status},
+            "sub_title_text": summary.chars().take(110).collect::<String>(),
+            "horizontal_content_list": rows,
+            "jump_list": [{"type": 1, "title": "查看完整报告", "url": url.as_str()}],
+            "card_action": {"type": 1, "url": url.as_str()},
+        }
+    }))
 }
 
 #[cfg(test)]
@@ -102,6 +178,34 @@ mod tests {
             assert_eq!(v["msgtype"], "text");
             assert_eq!(v["text"]["content"], "hi");
         }
+    }
+
+    #[test]
+    fn wecom_report_card_uses_labeled_metrics_and_report_action() {
+        let url = "http://shepherd.test/ocr-report.html?reportId=report-1";
+        let payload = report_card_payload(&ReportCard {
+            title: "胎号识别".into(),
+            project: "AI 算法项目".into(),
+            template_summary: String::new(),
+            status: "场景执行失败",
+            failed: true,
+            counts: Some([1000, 998, 2]),
+            operator: "tester".into(),
+            time: "2026-11-21 15:55:18 +08:00".into(),
+            details: vec!["样本 09 · 胎号 2354892105".into()],
+            url: url.into(),
+        })
+        .unwrap();
+        assert_eq!(payload["msgtype"], "template_card");
+        let card = &payload["template_card"];
+        assert_eq!(card["source"]["desc_color"], 2);
+        assert_eq!(card["sub_title_text"], "样本 09 · 胎号 2354892105");
+        assert_eq!(
+            card["horizontal_content_list"][2],
+            serde_json::json!({"keyname": "失败", "value": "2"})
+        );
+        assert_eq!(card["jump_list"][0]["url"], url);
+        assert_eq!(card["card_action"]["url"], url);
     }
 
     #[test]

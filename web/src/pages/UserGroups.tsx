@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Button, Empty, Form, Input, Segmented, Select, Space, Table, Tooltip } from 'antd'
 import { message, modal } from '../feedback'
-import { DeleteOutlined, EditOutlined, PlusOutlined, SearchOutlined } from '@ant-design/icons'
+import { CopyOutlined, DeleteOutlined, EditOutlined, PlusOutlined, SearchOutlined } from '@ant-design/icons'
 import { api, ApiError, type Role, type User } from '../api'
 import { useI18n } from '../i18n'
 import EditDrawer from '../components/EditDrawer'
@@ -21,7 +21,7 @@ export default function UserGroups() {
   const [q, setQ] = useState('')
   const [selId, setSelId] = useState<string>('')
   const [tab, setTab] = useState('perm')
-  const [createScope, setCreateScope] = useState<string | null>(null)
+  const [creating, setCreating] = useState<{ scope: string; source?: Role } | null>(null)
   const [editRole, setEditRole] = useState<Role | null>(null)
 
   const load = async () => {
@@ -102,7 +102,7 @@ export default function UserGroups() {
           {/* Allow creating a system group even when no groups exist yet */}
           {!loading && grouped.length === 0 && (
             <div style={{ padding: '8px 8px' }}>
-              <Button block icon={<PlusOutlined />} onClick={() => setCreateScope('SYSTEM')}>{t('ug.newGroup', '新建用户组')}</Button>
+              <Button block icon={<PlusOutlined />} onClick={() => setCreating({ scope: 'SYSTEM' })}>{t('ug.newGroup', '新建用户组')}</Button>
             </div>
           )}
           {loading ? null : grouped.map((g) => (
@@ -110,7 +110,7 @@ export default function UserGroups() {
               <div style={{ display: 'flex', alignItems: 'center', padding: '6px 8px', fontSize: 13, color: 'var(--text-2)' }}>
                 <span style={{ flex: 1, fontWeight: 600 }}>{g.label}</span>
                 <Tooltip title={t('ug.newGroupIn', '新建用户组')}>
-                  <Button type="text" size="small" icon={<PlusOutlined style={{ color: 'var(--brand)' }} />} onClick={() => setCreateScope(g.scope)} />
+                  <Button type="text" size="small" icon={<PlusOutlined style={{ color: 'var(--brand)' }} />} onClick={() => setCreating({ scope: g.scope })} />
                 </Tooltip>
               </div>
               {g.roles.map((r) => (
@@ -136,7 +136,8 @@ export default function UserGroups() {
           <Segmented value={tab} onChange={(v) => setTab(v as string)} options={[{ label: t('ug.perm', '权限'), value: 'perm' }, { label: t('ug.members', '成员'), value: 'members' }]} />
           <div style={{ flex: 1 }} />
           {sel && (
-            <Space>
+            <Space wrap>
+              <Button size="small" icon={<CopyOutlined />} onClick={() => setCreating({ scope: sel.scope || 'SYSTEM', source: sel })}>{t('ug.clonePermissions')}</Button>
               <Button size="small" icon={<EditOutlined />} onClick={() => setEditRole(sel)}>{t('a.edit', '编辑')}</Button>
               <Button size="small" danger icon={<DeleteOutlined />} onClick={() => del(sel)}>{t('a.delete', '删除')}</Button>
             </Space>
@@ -162,8 +163,8 @@ export default function UserGroups() {
         </div>
       </div>
 
-      <RoleCreateModal scope={createScope} onClose={() => setCreateScope(null)} onDone={(id) => { setCreateScope(null); setSelId(id); load() }} />
-      <RoleEditModal role={editRole} onClose={() => setEditRole(null)} onDone={() => { setEditRole(null); load() }} />
+      <RoleCreateModal scope={creating?.scope ?? null} source={creating?.source} onClose={() => setCreating(null)} onDone={(id) => { setCreating(null); setQ(''); setTab('perm'); setSelId(id); load() }} />
+      <RoleEditModal role={editRole} roles={roles} onClose={() => setEditRole(null)} onDone={() => { setEditRole(null); load() }} />
     </div>
   )
 }
@@ -202,20 +203,20 @@ function MembersPanel({ members, nonMembers, onGrant, onRevoke }: { members: Use
   )
 }
 
-function RoleCreateModal({ scope, onClose, onDone }: { scope: string | null; onClose: () => void; onDone: (id: string) => void }) {
+function RoleCreateModal({ scope, source, onClose, onDone }: { scope: string | null; source?: Role; onClose: () => void; onDone: (id: string) => void }) {
   const { t } = useI18n()
   const [form] = Form.useForm<{ name: string }>()
   const [busy, setBusy] = useState(false)
-  useEffect(() => { if (scope) form.resetFields() }, [scope, form])
+  useEffect(() => { if (scope) form.resetFields() }, [scope, source, form])
   return (
-    <EditDrawer title={`${t('ug.newGroup', '新建用户组')}${scope ? ` · ${t(`ug.scope.${scope}`, SCOPE_LABEL[scope] || scope)}` : ''}`} open={!!scope} onCancel={onClose} footer={null}>
+    <EditDrawer title={`${source ? t('ug.clonePermissions') : t('ug.newGroup', '新建用户组')}${scope ? ` · ${t(`ug.scope.${scope}`, SCOPE_LABEL[scope] || scope)}` : ''}`} open={!!scope} onCancel={onClose} footer={null}>
       <Form
         form={form}
         layout="vertical"
         onFinish={async (v) => {
           setBusy(true)
           try {
-            const r = await api.createRole({ name: v.name.trim(), scope: scope || 'SYSTEM', permissions: [] })
+            const r = await api.createRole({ name: v.name.trim(), scope: scope || 'SYSTEM', permissions: source?.permissions ?? [] })
             message.success(t('ug.created', '用户组已创建'))
             onDone(r.id)
           } catch (e) {
@@ -225,6 +226,7 @@ function RoleCreateModal({ scope, onClose, onDone }: { scope: string | null; onC
           }
         }}
       >
+        {source && <Form.Item label={t('ug.permissionSource')} extra={t('ug.clonePermissionsHelp')}>{source.name}</Form.Item>}
         <Form.Item name="name" label={t('ug.groupName', '用户组名称')} rules={[{ required: true }]}>
           <Input placeholder={t('ug.groupNamePlaceholder', '如:接口测试工程师')} autoFocus />
         </Form.Item>
@@ -236,7 +238,7 @@ function RoleCreateModal({ scope, onClose, onDone }: { scope: string | null; onC
 
 // Edit group: rename + a checkbox permission matrix (module / feature / actions). Permissions the
 // catalog can't render (legacy/unknown resources) are preserved verbatim via `extras` so nothing is lost.
-function RoleEditModal({ role, onClose, onDone }: { role: Role | null; onClose: () => void; onDone: () => void }) {
+function RoleEditModal({ role, roles, onClose, onDone }: { role: Role | null; roles: Role[]; onClose: () => void; onDone: () => void }) {
   const { t } = useI18n()
   const [form] = Form.useForm<{ name: string }>()
   const [busy, setBusy] = useState(false)
@@ -272,6 +274,20 @@ function RoleEditModal({ role, onClose, onDone }: { role: Role | null; onClose: 
         <Form.Item name="name" label={t('ug.groupName', '用户组名称')} rules={[{ required: true }]}>
           <Input autoFocus />
         </Form.Item>
+        {role && roles.some(candidate => candidate.id !== role.id && candidate.scope === role.scope) && (
+          <Form.Item label={t('ug.permissionSource')} extra={t('ug.replacePermissionsHelp')}>
+            <Select showSearch optionFilterProp="label" value={undefined} placeholder={t('ug.selectPermissionSource')}
+              options={roles.filter(candidate => candidate.id !== role.id && candidate.scope === role.scope)
+                .map(candidate => ({ value: candidate.id, label: candidate.name }))}
+              onChange={id => {
+                const source = roles.find(candidate => candidate.id === id)
+                if (!source) return
+                const parsed = parsePermissions(source.permissions)
+                setChecked(parsed.checked)
+                setExtras(parsed.extras)
+              }} />
+          </Form.Item>
+        )}
         <Form.Item label={t('ug.permsLabel2', '权限')}>
           <PermissionMatrix checked={checked} onChange={setChecked} />
         </Form.Item>

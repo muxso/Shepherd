@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Button, Dropdown, Empty, Input, InputNumber, Segmented, Select, Space, Typography } from 'antd'
 import { PlusOutlined, DeleteOutlined } from '@ant-design/icons'
+import ResponseJsonPathPicker from './ResponseJsonPathPicker'
 import { useI18n } from '../i18n'
 
 // Backend assertion (api-runner Assertion, serde tag=type / content=args).
@@ -96,13 +97,17 @@ function fromAssertion(a: Assertion): Row {
 export default function AssertionEditor({
   value,
   onChange,
+  responseBody,
+  initialSelection = 0,
 }: {
+  responseBody?: string
+  initialSelection?: number
   value?: Assertion[]
   onChange?: (v: Assertion[]) => void
 }) {
   const { t } = useI18n()
   const [rows, setRows] = useState<Row[]>(() => (value && value.length ? value.map(fromAssertion) : []))
-  const [sel, setSel] = useState(0)
+  const [sel, setSel] = useState(initialSelection)
 
   const push = (next: Row[]) => {
     setRows(next)
@@ -135,6 +140,12 @@ export default function AssertionEditor({
           {t('assert.add', '断言')}
         </Button>
       </Dropdown>
+      <span style={{ marginLeft: 8 }}>
+        <ResponseJsonPathPicker label="从响应添加断言" responseBody={responseBody} onSelect={({ expression }) => {
+          push([...rows, { ...emptyRow('body'), path: expression }])
+          setSel(rows.length)
+        }} />
+      </span>
       {rows.length === 0 ? (
         <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('assert.emptyHint', '无断言(执行只看传输是否可达)')} />
       ) : (
@@ -175,8 +186,8 @@ export default function AssertionEditor({
             </Space>
           </div>
           {/* Right: editor for the selected assertion */}
-          <div style={{ flex: 1, padding: 12 }}>
-            {cur && <RowEditor row={cur} onChange={(p) => update(sel, p)} t={t} />}
+          <div style={{ flex: 1, minWidth: 0, padding: 12 }}>
+            {cur && <RowEditor responseBody={responseBody} row={cur} onChange={(p) => update(sel, p)} t={t} />}
           </div>
         </div>
       )}
@@ -184,7 +195,7 @@ export default function AssertionEditor({
   )
 }
 
-function RowEditor({ row, onChange, t }: { row: Row; onChange: (p: Partial<Row>) => void; t: (k: string, f?: string) => string }) {
+function RowEditor({ row, onChange, t, responseBody }: { responseBody?: string; row: Row; onChange: (p: Partial<Row>) => void; t: (k: string, f?: string) => string }) {
   const condOptions = row.cat === 'status' || row.cat === 'variable' ? NUMERIC_CONDS : TEXT_CONDS
   if (row.cat === 'time') {
     return (
@@ -222,6 +233,9 @@ function RowEditor({ row, onChange, t }: { row: Row; onChange: (p: Partial<Row>)
           <Input value={row.expected} onChange={(e) => onChange({ expected: e.target.value })} placeholder={t('assert.matchValue', '匹配值')} />
         )}
       </Space.Compact>
+      {row.cat === 'body' && row.bodyMode === 'jsonpath' && (
+        <ResponseJsonPathPicker responseBody={responseBody} onSelect={({ expression }) => onChange({ path: expression })} />
+      )}
       {row.cat === 'variable' && (
         <Typography.Text type="secondary" style={{ fontSize: 12 }}>{t('assert.varHint', '变量来自前置/后置「提取参数」或环境变量')}</Typography.Text>
       )}

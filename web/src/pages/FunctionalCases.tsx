@@ -52,14 +52,17 @@ export default function FunctionalCases() {
     const loadedProject = projectId
     if (!projectId) { setCases([]); setModules([]); return }
     setLoading(true)
+    void api.modules(projectId).catch(() => []).then(mm => {
+      if (currentProject.current === loadedProject) setModules(Array.isArray(mm) ? mm : [])
+    })
     try {
-      const [cs, mm] = await Promise.all([
-        api.functionalCases(projectId),
-        api.modules(projectId).catch(() => []),
-      ])
+      const preview = await api.functionalCaseSummaries(projectId, true)
       if (currentProject.current !== loadedProject) return
-      setCases(cs)
-      setModules(Array.isArray(mm) ? mm : [])
+      setCases(preview)
+      setLoading(false)
+      if (preview.length < 40) return
+      const cs = await api.functionalCaseSummaries(projectId)
+      if (currentProject.current === loadedProject) setCases(cs)
     } catch (e) {
       if (currentProject.current !== loadedProject) return
       message.error(e instanceof ApiError ? e.message : t('func.loadFailed', '加载失败'))
@@ -127,7 +130,7 @@ export default function FunctionalCases() {
     { key: 'module', label: t('func.colModule', '模块'), title: t('func.colModule', '模块'), dataIndex: 'module', width: 140, render: renderModule },
     { key: 'service', label: '服务', title: '服务', width: 130, render: (_: unknown,c: FunctionalCase) => assets.data.services.find(s => s.id === caseServices.get(c.id))?.name || '待归属' },
     { key: 'priority', label: t('func.colPriority', '优先级'), title: t('func.colPriority', '优先级'), dataIndex: 'priority', width: 90, render: (p?: string) => <Tag color={prioColor(p)}>{p || 'P2'}</Tag> },
-    { key: 'steps', label: t('func.colSteps', '步骤'), title: t('func.colSteps', '步骤'), dataIndex: 'steps', width: 70, render: (s?: CaseStep[]) => (s?.length || 0) },
+    { key: 'steps', label: t('func.colSteps', '步骤'), title: t('func.colSteps', '步骤'), dataIndex: 'steps', width: 70, render: (s: CaseStep[] | undefined, c: FunctionalCase) => c.stepCount ?? s?.length ?? 0 },
     { key: 'status', label: t('func.colStatus', '状态'), title: t('func.colStatus', '状态'), dataIndex: 'status', width: 110, render: (s?: string) => <Tag>{funcCaseStatusLabel(s, t)}</Tag> },
     { key: 'createdBy', label: t('func.colCreatedBy', '创建人'), title: t('func.colCreatedBy', '创建人'), dataIndex: 'createdBy', width: 110, ellipsis: true, render: (u?: string) => u ? <span style={{ color: 'var(--text-2)' }}>{u}</span> : <span style={{ color: 'var(--text-3)' }}>—</span> },
     {
@@ -137,7 +140,12 @@ export default function FunctionalCases() {
       width: 110,
       render: (_v, c) => (
         <Space size={0} onClick={(e) => e.stopPropagation()}>
-          <Button type="link" size="small" icon={<EditOutlined />} onClick={() => setEditing(c)}>{t('a.edit', '编辑')}</Button>
+          <Button type="link" size="small" icon={<EditOutlined />} onClick={() => {
+            const loadedProject = projectId
+            api.getFunctionalCase(c.id).then(full => {
+              if (currentProject.current === loadedProject) setEditing(full)
+            }).catch(e => message.error(e instanceof ApiError ? e.message : t('func.loadFailed', '加载失败')))
+          }}>{t('a.edit', '编辑')}</Button>
           <Popconfirm
             title={t('func.confirmDelete', '确认删除该用例?')}
             okText={t('a.confirm', '确定')}
@@ -234,7 +242,7 @@ export default function FunctionalCases() {
     <div style={{height:'100%',display:'flex',flexDirection:'column',minHeight:0}}>
       <TestAssetToolbar key={projectId} projectId={projectId} data={assets.data} error={assets.error} view={assetView} onView={v=>selectAssetParam('testView',v)} service={serviceFilter} onService={v=>selectAssetParam('service',v)} onChanged={()=>{assets.reload();void load()}} />
       <div style={{flex:1,minHeight:0}}>
-      {assetView==='scenarios' ? <ScenarioManager key={projectId} projectId={projectId} data={assets.data} cases={cases} serviceFilter={serviceFilter} onChanged={assets.reload} onOpenCase={setDetailId}/> : <Workspace
+      {assetView==='scenarios' ? (assets.error == null && <ScenarioManager key={projectId} projectId={projectId} data={assets.data} cases={cases} serviceFilter={serviceFilter} onChanged={assets.reload} onOpenCase={setDetailId}/>) : <Workspace
         left={left}
         listLabel={t('func.allCases', '全部用例')}
         activeKey={tabs.activeKey}
@@ -291,7 +299,14 @@ export default function FunctionalCases() {
   )
 }
 
-function CaseDetail({ c, moduleLabel }: { c: FunctionalCase; moduleLabel?: ReactNode }) {
+function CaseDetail({ c: summary, moduleLabel }: { c: FunctionalCase; moduleLabel?: ReactNode }) {
+  const [detail, setDetail] = useState<FunctionalCase | null>(null)
+  useEffect(() => {
+    let live = true
+    api.getFunctionalCase(summary.id).then(result => { if (live) setDetail(result) }).catch(() => {})
+    return () => { live = false }
+  }, [summary.id, summary.updatedAt])
+  const c = detail?.id === summary.id && detail.updatedAt === summary.updatedAt ? detail : summary
   const { t } = useI18n()
   const cf = c.customFields || {}
   const [covReqs, setCovReqs] = useState<CaseRequirementLink[]>([])

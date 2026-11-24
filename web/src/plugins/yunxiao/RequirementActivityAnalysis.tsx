@@ -55,7 +55,6 @@ export default function RequirementActivityAnalysis({ data, onBack, openRequirem
         { title: '涉及仓库', width: 100, dataIndex: 'repositories' },
         ...(data.permissions.bugs ? [{ title: '新增有效 Bug', width: 120, render: (_: unknown, r: RequirementFocus) => r.bugs.length || '—' }] : []),
       ]} />}
-      <p className="yx-muted">参与人数是提交覆盖，不能推算实际人天。同一提交可关联多项需求，不能相加当团队总量；没有明确需求关联的提交单独保留。Bug 按创建时间和显式需求关联去重，不推定个人责任。</p>
     </>}
     <Drawer title={detail ? `${detail.serial || detail.id} · 需求证据` : '需求证据'} open={!!detail} onClose={() => setSelected(null)} size={680} styles={{ wrapper: { maxWidth: '96vw' } }}>
       {detail && <><h3><ActivitySourceLink url={detail.url}>{detail.title}</ActivitySourceLink></h3><p className="yx-muted">参与 {[...new Set(detail.events.map(e => e.actor))].join('、')}</p><p>新增 +{lineCount(detail.events, 'additions')} / 删除 −{lineCount(detail.events, 'deletions')} 行</p><h4>关联仓库</h4>{[...new Set(detail.events.map(e => e.repo || String(e.repoId)))].map(repo => <div className="yx-activity-evidence" key={repo}><ActivitySourceLink url={detail.events.find(e => (e.repo || String(e.repoId)) === repo && e.repositoryUrl)?.repositoryUrl}>{repo}</ActivitySourceLink></div>)}{!!detail.bugs.length && <><h4>本期新增有效 Bug</h4>{detail.bugs.map(b => <div className="yx-activity-evidence" key={b.id}><ActivitySourceLink url={b.url}>{b.serial || b.id} {b.title}</ActivitySourceLink><small>{b.status} · {b.date}</small></div>)}</>}<Space><Button onClick={() => openRequirement(detail.id)}>查看需求产出</Button></Space></>}

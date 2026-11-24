@@ -24,12 +24,79 @@ export interface DevopsDashboard {
 export interface DevopsRow {
   externalId?: string; id?: string | number; serial?: string; title?: string; sha?: string; url?: string;
   requirements?: { externalId: string; title?: string | null; serial?: string | null }[];
+  quality?: { analyses: number; failed: number };
   additions?: number | null; deletions?: number | null; requirementIds?: string[];
   [key: string]: unknown;
 }
 export interface AuthorIdentity { name: string; group?: string | null; aliases: string[] }
 export interface AuthorIdentitiesData { identities: AuthorIdentity[]; permissions: { update: boolean } }
+export interface SonarCondition {
+  status?: string | null;
+  threshold?: string | number | null;
+  comparator?: string | null;
+}
+export interface SonarAnalysis {
+  scope: 'sonar_repository' | 'ci_pull_request';
+  taskId: string;
+  projectKey?: string;
+  repositoryId: string;
+  repositoryName?: string;
+  commitAuthor?: string;
+  personName?: string;
+  repositoryUrl?: string;
+  sonarUrl?: string;
+  branch?: string;
+  pullRequest: string | null;
+  revision: string;
+  author: string | null;
+  analyzedAt: string;
+  gate: 'OK' | 'ERROR' | 'WARN' | 'NONE';
+  newIssues: number | null;
+  newCoverage: number | null;
+  newDuplication: number | null;
+  push?: { baseRevision: string; branch: string; pushedAt: string; author: string | null; baselineVerified?: boolean };
+  analysisQuality?: {
+    newIssues?: number | null; acceptedIssues?: number | null; coverage?: number | null;
+    linesToCover?: number | null; duplication?: number | null; lines?: number | null;
+    securityHotspots?: number | null;
+    conditions?: Partial<Record<'new_violations' | 'new_coverage' | 'new_duplicated_lines_density', SonarCondition>>;
+  };
+  overallQuality?: {
+    issues?: number; acceptedIssues?: number; coverage?: number;
+    duplication?: number; securityHotspots?: number;
+  };
+  newCode?: {
+    lines?: number | null; securityIssues?: number | null; securityRating?: number | null;
+    reliabilityIssues?: number | null; reliabilityRating?: number | null;
+    maintainabilityIssues?: number | null; maintainabilityRating?: number | null;
+    acceptedIssues?: number | null; securityHotspots?: number | null; linesToCover?: number | null; duplicatedLines?: number | null;
+  };
+}
+export interface StatusDwellStage {
+  status: string;
+  phase: 'completed' | 'current';
+  enteredAt: string;
+  exitedAt: string | null;
+  seconds: number;
+}
+export interface StatusDwellData {
+  asOf: string | null;
+  month: string | null;
+  total: number;
+  stages: string[];
+  currentStatusCounts: Record<string, number>;
+  workItems: {
+    externalId: string;
+    serial: string | null;
+    title: string | null;
+    currentStatus: string | null;
+    seconds: number | null;
+    stages: StatusDwellStage[];
+  }[];
+}
+
 export const devopsApi = {
+
   authorIdentities: (id: string) => request<AuthorIdentitiesData>('GET', `/api/devops/sources/${encodeURIComponent(id)}/author-identities`),
   setAuthorIdentities: (id: string, identities: AuthorIdentity[]) => request<{ identities: AuthorIdentity[] }>('PUT', `/api/devops/sources/${encodeURIComponent(id)}/author-identities`, { identities }),
   codeAuthors: (id: string, month: string) => request<CodeAuthorsData>('GET', `/api/devops/sources/${encodeURIComponent(id)}/code-authors?${new URLSearchParams({ month })}`),
@@ -38,6 +105,7 @@ export const devopsApi = {
   bugStatistics: (id: string, query: Record<string,string>) => request<FilteredBugStatistics>('GET', `/api/devops/sources/${encodeURIComponent(id)}/bug-statistics?${new URLSearchParams(query)}`),
   sources: () => request<{ items: DevopsSource[] }>('GET', '/api/devops/sources'),
   dashboard: (id: string, days: number) => request<DevopsDashboard>('GET', `/api/devops/sources/${encodeURIComponent(id)}/dashboard?days=${days}`),
+  statusDwell: (id: string, kind: 'requirement' | 'bug', month: string, search: string, page: number, status: string, sortOrder: 'asc' | 'desc', currentStatus: string) => request<StatusDwellData>('GET', `/api/devops/sources/${encodeURIComponent(id)}/records?${new URLSearchParams({ kind: `status-dwell-${kind}`, month, search, page: String(page), pageSize: '15', status, sortOrder, currentStatus })}`),
   records: (id: string, query: Record<string, string | number | boolean>) => request<{ items: DevopsRow[]; total: number }>('GET', `/api/devops/sources/${encodeURIComponent(id)}/records?${new URLSearchParams(Object.entries(query).map(([k, v]) => [k, String(v)]))}`),
 }
 
@@ -79,6 +147,8 @@ export interface MemberMetric {
   reopenCount:number; reopenedBugs:number; reopenEvaluatedBugs:number; reopenRate:number | null; bugs:MemberBugMetric[];
   deliveredDueRequirements?: number; dueRequirements: number; onTime: number; deliveredLate: number; overdueAtEnd: number;
   unknownDelivery: number; delayRate: number | null; radar: [number | null, number | null, number | null];
+  onTimeRate?: number | null;
+  sonar?: { pushes: number; passed: number; evaluated: number; passRate: number | null; recent: SonarAnalysis[] } | null;
   requirements: MemberRequirementMetric[];
 }
 export interface BugQualityData {
@@ -117,9 +187,13 @@ export interface ActivityEvent {
   additions: number | null; deletions: number | null; linked: boolean; requirements: { externalId: string; serial: string | null; title: string | null; url?: string | null }[];
 }
 export interface ActivityBug { id: string; serial: string | null; title: string | null; status: string | null; at: string; date: string; responsibles: string[]; requirements: { externalId: string; serial: string | null; title: string | null; url?: string | null }[]; url?: string | null }
+export interface SonarActivityDay { member: string; date: string; pushes: number; passed: number; failed: number; unverifiedBaseline?: number; recent?: SonarAnalysis[] }
+export interface RegressionActivityDay { member: string; date: string; passed: number; evaluated: number }
 export interface TeamActivityData {
   source: DevopsSource; role: ActivityRole; days: number; from: string; through: string; start: string; endExclusive: string; timezone: string; observedAt: string | null;
   members: ActivityMember[]; events: ActivityEvent[]; bugs: ActivityBug[]; reviewPolicy?: ActivityReviewPolicy;
+  sonarDaily?: SonarActivityDay[];
+  regressionDaily?: RegressionActivityDay[];
   coverage: { complete: boolean; rosterConfigured: boolean; unattributedEvents: number; testcasesCollected: boolean };
   permissions: { requirements: boolean; bugs: boolean; testcases: boolean };
 }
@@ -129,6 +203,7 @@ export const activityApi = {
   reviewPolicy: (id: string) => request<ActivityReviewPolicy & { permissions: { update: boolean } }>('GET', `/api/devops/sources/${encodeURIComponent(id)}/activity-review-policy`),
   saveReviewPolicy: (id: string, policy: ActivityReviewPolicy) => request<ActivityReviewPolicy>('PUT', `/api/devops/sources/${encodeURIComponent(id)}/activity-review-policy`, policy),
   activity: (id: string, role: ActivityRole, days: number) => request<TeamActivityData>('GET', `/api/devops/sources/${encodeURIComponent(id)}/team-activity?${new URLSearchParams({ role, days: String(days) })}`),
+  regressionActivity: (days: number) => request<RegressionActivityDay[]>('GET', `/api/scenario/regression-activity?days=${days}`),
   members: (id: string) => request<{ members: ActivityMemberSetting[]; permissions: { update: boolean } }>('GET', `/api/devops/sources/${encodeURIComponent(id)}/activity-members`),
   saveMembers: (id: string, members: ActivityMemberSetting[]) => request<{ members: ActivityMemberSetting[] }>('PUT', `/api/devops/sources/${encodeURIComponent(id)}/activity-members`, { members }),
 }

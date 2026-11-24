@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
-import { Alert, Spin } from 'antd'
+import { Alert } from 'antd'
+import { PageSkeleton } from '../components/Page'
 import { pluginApi, type Plugin } from '../api'
 
 const Context = createContext<{ items: Plugin[]; loading: boolean; error: string }>({ items: [], loading: true, error: '' })
@@ -25,7 +26,7 @@ export function usePlugins() {
 
 export function PluginGuard({ id, children }: { id: string; children: ReactNode }) {
   const { enabled, loading, error } = usePlugins()
-  if (loading) return <Spin />
+  if (loading) return <PageSkeleton />
   if (error) return <Alert type="error" message={error} />
   if (!enabled(id)) return <Alert type="info" message="插件未启用" description="请在系统的插件页面查看启用方式。" />
   return <>{children}</>

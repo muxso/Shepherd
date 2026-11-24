@@ -22,6 +22,9 @@ impl AuthUser {
 }
 
 #[derive(Debug, Clone)]
+pub struct AuthenticatedActor(pub String);
+
+#[derive(Debug, Clone)]
 pub struct Session {
     pub token: String,
     pub user_id: String,

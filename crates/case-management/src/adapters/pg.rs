@@ -140,6 +140,45 @@ impl CaseRepository for PgCaseRepository {
         rows.iter().map(row_to_case).collect()
     }
 
+    async fn list_options(
+        &self,
+        project_id: &str,
+    ) -> Result<Vec<(String, String, String)>, RepoError> {
+        sqlx::query_as(
+            "SELECT id, name, module FROM ms_functional_case
+             WHERE project_id = $1 AND NOT deleted ORDER BY num DESC, id",
+        )
+        .bind(project_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_err)
+    }
+
+    async fn list_summaries(
+        &self,
+        project_id: &str,
+        limit: Option<i64>,
+    ) -> Result<Vec<(FunctionalCase, i32)>, RepoError> {
+        let columns = COLS.replace("custom_fields, steps,", "custom_fields, '[]'::jsonb AS steps,");
+        let rows = sqlx::query(&format!(
+            "SELECT {columns}, CASE WHEN jsonb_typeof(steps)='array' THEN jsonb_array_length(steps) ELSE 0 END AS step_count
+             FROM ms_functional_case WHERE project_id=$1 AND NOT deleted ORDER BY num DESC, id LIMIT $2"
+        )).bind(project_id).bind(limit).fetch_all(&self.pool).await.map_err(map_err)?;
+        rows.iter()
+            .map(|row| Ok((row_to_case(row)?, row.try_get("step_count").map_err(map_err)?)))
+            .collect()
+    }
+
+    async fn count_by_project(&self, project_id: &str) -> Result<i64, RepoError> {
+        sqlx::query_scalar(
+            "SELECT count(*) FROM ms_functional_case WHERE project_id=$1 AND NOT deleted",
+        )
+        .bind(project_id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(map_err)
+    }
+
     async fn get(&self, id: &str) -> Result<Option<FunctionalCase>, RepoError> {
         let row = sqlx::query(&format!(
             "SELECT {COLS} FROM ms_functional_case WHERE id = $1 AND NOT deleted"

@@ -341,6 +341,46 @@ fn ids_json(ids: &[String]) -> String {
 
 #[async_trait]
 impl NoticeRuleStore for PgNoticeRuleStore {
+    async fn report_base_url(&self) -> Option<String> {
+        super::report_address::effective(&self.pool).await
+    }
+
+    async fn report_context(
+        &self,
+        notice: &crate::domain::NewNotice,
+    ) -> Option<crate::domain::ReportContext> {
+        let row = sqlx::query_as::<_, (String, String, String, String, String, String)>(
+            include_str!("report_context.sql"),
+        )
+        .bind(&notice.project_id)
+        .bind(&notice.resource_id)
+        .bind(&notice.operator)
+        .bind(&notice.resource_type)
+        .fetch_optional(&self.pool)
+        .await;
+        match row {
+            Ok(Some((project, scenario, trigger, changed_by, creator, followers))) => {
+                Some(crate::domain::ReportContext {
+                    project,
+                    scenario: if notice.resource_type == "SCENARIO_BATCH" {
+                        notice.title.clone()
+                    } else {
+                        scenario
+                    },
+                    trigger,
+                    changed_by,
+                    creator,
+                    followers,
+                })
+            }
+            Ok(None) => None,
+            Err(error) => {
+                tracing::warn!(%error, "unable to read report notification context");
+                None
+            }
+        }
+    }
+
     async fn insert_robot(&self, draft: &RobotDraft) -> Result<Robot, RepoError> {
         let row = sqlx::query(&format!(
             "INSERT INTO ms_notice_robot (project_id, name, platform, webhook_url, secret, enabled) \

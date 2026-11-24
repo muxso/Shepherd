@@ -1,9 +1,10 @@
 import { useState } from 'react'
-import { Button, DatePicker, Form, Input, InputNumber, Select, Space } from 'antd'
+import { Button, DatePicker, Form, Input, InputNumber, Select, Skeleton, Space } from 'antd'
 import dayjs, { type Dayjs } from 'dayjs'
+import { ReadError } from '../Page'
 import EditDrawer from '../EditDrawer'
 import { message } from '../../feedback'
-import { api, ApiError, type CaseReviewSummary, type FunctionalCase } from '../../api'
+import { api, ApiError, type CaseReviewSummary, type FunctionalCaseOption } from '../../api'
 import { useI18n } from '../../i18n'
 import { modulePathOf, type ReviewModule } from './reviewLocal'
 
@@ -27,6 +28,8 @@ export default function ReviewFormDrawer({
   projectId,
   modules,
   cases,
+  caseOptionsLoading,
+  caseOptionsError,
   onClose,
   onSaved,
 }: {
@@ -35,7 +38,9 @@ export default function ReviewFormDrawer({
   editing?: CaseReviewSummary
   projectId: string
   modules: ReviewModule[]
-  cases: FunctionalCase[]
+  cases: FunctionalCaseOption[]
+  caseOptionsLoading: boolean
+  caseOptionsError?: unknown
   onClose: () => void
   onSaved: () => void
 }) {
@@ -152,6 +157,9 @@ export default function ReviewFormDrawer({
             ]}
           />
         </Form.Item>
+        {!isEdit && caseOptionsLoading && <Skeleton.Input size="small" />}
+        {!isEdit && caseOptionsError != null && <ReadError error={caseOptionsError}
+          title={t('review.caseOptionsReadFailed', '用例选项读取失败')} />}
         {!isEdit && (
           <Form.Item name="caseIds" label={t('review.cases', '评审用例')} rules={[{ required: true, message: t('review.pickCases', '请选择要评审的用例') }]}>
             <Select
@@ -159,6 +167,7 @@ export default function ReviewFormDrawer({
               showSearch
               optionFilterProp="label"
               placeholder={t('review.pickCases', '请选择要评审的用例')}
+              disabled={caseOptionsLoading || caseOptionsError != null}
               options={cases.map((c) => ({ value: c.id, label: c.name }))}
             />
           </Form.Item>

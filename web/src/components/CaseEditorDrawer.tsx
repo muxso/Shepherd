@@ -112,6 +112,7 @@ export default function CaseEditorDrawer({
         await api.debugSend({
           method,
           url,
+          projectId: definition.projectId,
           environmentId: env?.id,
           baseUrl: env?.baseUrl,
           variables: env?.variables,
@@ -234,17 +235,17 @@ export default function CaseEditorDrawer({
     {
       key: 'pre',
       label: `${t('case.preProcess', '前置')}${preProcessors.length ? ` (${preProcessors.length})` : ''}`,
-      children: <ProcessorEditor value={preProcessors} onChange={setPreProcessors} allowed={['wait', 'plugin']} />,
+      children: <ProcessorEditor environmentId={envId} value={preProcessors} onChange={setPreProcessors} allowed={['wait', 'plugin', 'sql', 'sandboxScript']} />,
     },
     {
       key: 'post',
       label: `${t('case.postProcess', '后置')}${postProcessors.length ? ` (${postProcessors.length})` : ''}`,
-      children: <ProcessorEditor value={postProcessors} onChange={setPostProcessors} allowed={['extract', 'wait', 'script', 'sql']} />,
+      children: <ProcessorEditor responseBody={resp?.body} value={postProcessors} onChange={setPostProcessors} allowed={['extract', 'wait', 'script', 'sql']} />,
     },
     {
       key: 'assert',
       label: `${t('case.assertions', '断言')}${assertions.length ? ` (${assertions.length})` : ''}`,
-      children: <AssertionEditor value={assertions} onChange={setAssertions} />,
+      children: <AssertionEditor responseBody={resp?.body} value={assertions} onChange={setAssertions} />,
     },
     {
       key: 'auth',

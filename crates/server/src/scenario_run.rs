@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use axum::{
-    extract::{FromRef, Path, State},
+    extract::{FromRef, Path, Query, State},
     http::StatusCode,
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -13,13 +13,14 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use utoipa::{OpenApi, ToSchema};
 
-use api_runner::{Assertion, HttpMethod, MatchCondition, Processor, RequestSpec};
+use crate::environment_extension::ExecutionResolver;
+use api_runner::{Assertion, HttpMethod, MatchCondition, RequestSpec};
 use api_scenario::application::{
     CompileError, CompileScenarioUseCase, RecordScenarioExecutionUseCase,
 };
 use api_scenario::domain::PlanStep;
 use api_test::adapters::local::CaseSpecSource;
-use api_test::adapters::plan::{Condition, Leaf, PlanExecutor, PlanNode};
+use api_test::adapters::plan::{Condition, Leaf, PlanExecutor, PlanNode, StepPreparation};
 use api_test::adapters::PgBatchReport;
 use api_test::ports::EnvironmentPort;
 use pool_runner::protocol::{WireEnv, WireNode};
@@ -43,6 +44,8 @@ struct RunState {
 pub struct ScenarioRunner {
     pub compile: CompileScenarioUseCase,
     pub executor: PlanExecutor,
+    pub preparation: Option<ExecutionResolver>,
+    pub actor: Option<AuthUser>,
     pub envs: Arc<dyn EnvironmentPort>,
     pub reports: PgBatchReport,
     pub recorder: RecordScenarioExecutionUseCase,
@@ -54,6 +57,85 @@ pub struct ScenarioRunner {
     /// Failure notifications to the scenario creator; None for embedded runs
     /// (plan entries roll failures up into the plan result instead).
     pub notifier: Option<notice::application::Notifier>,
+}
+
+struct ScenarioPreparation {
+    resolver: ExecutionResolver,
+    pool: migrate::PgPool,
+    scenario_id: Option<String>,
+    actor: AuthUser,
+    project_id: String,
+    environment_id: Option<String>,
+}
+
+#[async_trait::async_trait]
+impl StepPreparation for ScenarioPreparation {
+    async fn prepare(
+        &self,
+        variables: std::collections::BTreeMap<String, String>,
+        processors: &[api_runner::Processor],
+    ) -> Result<std::collections::BTreeMap<String, String>, String> {
+        self.prepare_scoped(variables, processors, false).await
+    }
+
+    async fn plugin_step(
+        &self,
+        variables: std::collections::BTreeMap<String, String>,
+        processor: &api_runner::Processor,
+    ) -> Result<std::collections::BTreeMap<String, String>, String> {
+        self.prepare_scoped(variables, std::slice::from_ref(processor), true).await
+    }
+}
+
+impl ScenarioPreparation {
+    async fn prepare_scoped(
+        &self,
+        variables: std::collections::BTreeMap<String, String>,
+        processors: &[api_runner::Processor],
+        plugin_step: bool,
+    ) -> Result<std::collections::BTreeMap<String, String>, String> {
+        if let Some(scenario_id) = &self.scenario_id {
+            let belongs_to_project: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM ms_api_scenario WHERE id = $1 AND project_id = $2 AND NOT deleted)",
+        )
+        .bind(scenario_id)
+        .bind(&self.project_id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|_| "could not resolve scenario project".to_owned())?;
+            if !belongs_to_project {
+                return Err("scenario does not belong to the execution project".into());
+            }
+        }
+        let prepared = if plugin_step
+            && !matches!(processors, [api_runner::Processor::SandboxScript { .. }])
+        {
+            let environment =
+                self.environment_id.as_deref().ok_or("select an execution environment")?;
+            self.resolver
+                .prepare_scenario_step(
+                    self.actor.clone(),
+                    &self.project_id,
+                    environment,
+                    variables,
+                    processors,
+                )
+                .await
+        } else {
+            self.resolver
+                .prepare_request_project(
+                    self.actor.clone(),
+                    &self.project_id,
+                    self.environment_id.as_deref(),
+                    variables,
+                    processors,
+                )
+                .await
+        };
+        prepared.map(|prepared| prepared.variables).map_err(|response| {
+            format!("scenario plugin execution failed (HTTP {})", response.status().as_u16())
+        })
+    }
 }
 
 pub enum RunError {
@@ -87,6 +169,28 @@ pub type ExecutedOnSlot = Arc<Mutex<Option<ExecutedOn>>>;
 
 impl ScenarioRunner {
     /// Compiles a scenario into executable plan nodes (+ static leaf count).
+    fn executor_for(
+        &self,
+        scenario_id: &str,
+        project_id: &str,
+        environment_id: Option<&str>,
+    ) -> PlanExecutor {
+        let executor = self.executor.clone();
+        match (&self.preparation, &self.actor, environment_id) {
+            (Some(resolver), Some(actor), environment_id) => {
+                executor.with_preparation(Arc::new(ScenarioPreparation {
+                    resolver: resolver.clone(),
+                    pool: self.pool.clone(),
+                    scenario_id: Some(scenario_id.to_owned()),
+                    actor: actor.clone(),
+                    project_id: project_id.to_owned(),
+                    environment_id: environment_id.map(str::to_owned),
+                }))
+            }
+            _ => executor,
+        }
+    }
+
     async fn prepare(&self, scenario_id: &str) -> Result<(Vec<PlanNode>, usize), RunError> {
         let plan = match self.compile.compile_plan(scenario_id).await {
             Ok(p) => p,
@@ -210,6 +314,7 @@ impl ScenarioRunner {
         environment_id: Option<&str>,
         stop_on_failure: bool,
         pool_id: Option<&str>,
+        triggered_by: &str,
     ) -> Result<StartedRun, RunError> {
         let (nodes, count) = self.prepare(scenario_id).await?;
         // Env fallback: when the caller does not pin an environment, use the
@@ -226,6 +331,18 @@ impl ScenarioRunner {
             .await
             .map_err(|_| RunError::Internal("create report error"))?;
         let step_ids = leaf_ids(&nodes);
+        if !triggered_by.is_empty() {
+            if let Err(error) = sqlx::query(
+                "UPDATE ms_api_batch_report SET scenario_triggered_by = $2 WHERE id = $1",
+            )
+            .bind(&report_id)
+            .bind(triggered_by)
+            .execute(&self.pool)
+            .await
+            {
+                tracing::warn!(%report_id, %error, "Could not record scenario trigger");
+            }
+        }
         if let Some(hub) = &self.hub {
             hub.events().publish(
                 &report_id,
@@ -309,7 +426,11 @@ impl ScenarioRunner {
                     }
                 }
             }
-            let status = match this.executor.run(&rid, &nodes, &env, stop_on_failure).await {
+            let status = match this
+                .executor_for(&sid, &proj, effective_env.as_deref())
+                .run(&rid, &nodes, &env, stop_on_failure)
+                .await
+            {
                 Ok(true) => "SUCCESS",
                 _ => "ERROR",
             };
@@ -323,19 +444,25 @@ impl ScenarioRunner {
             }
             status.to_string()
         });
-        // Failure notice to the scenario creator (direct runs only; embedded
-        // plan runs pass notifier: None and roll up into the plan result).
         let fut: Pin<Box<dyn Future<Output = String> + Send>> = match self.notifier.clone() {
             Some(notifier) => {
                 let db = self.pool.clone();
                 let sid = scenario_id.to_string();
                 let proj = project_id.to_string();
                 let rid = report_id.clone();
+                let trigger = triggered_by.to_owned();
                 Box::pin(async move {
                     let status = fut.await;
-                    if status == "ERROR" {
-                        notify_scenario_failure(&db, &notifier, &sid, &proj, &rid).await;
-                    }
+                    notify_scenario_result(
+                        &db,
+                        &notifier,
+                        ScenarioNoticeTarget::Single(&sid),
+                        &proj,
+                        &rid,
+                        &status,
+                        &trigger,
+                    )
+                    .await;
                     status
                 })
             }
@@ -358,6 +485,7 @@ impl ScenarioRunner {
         count: usize,
         env: &api_test::domain::ResolvedEnv,
         pool_id: Option<&str>,
+        environment_id: Option<&str>,
     ) -> String {
         if let (Some(pid), Some(hub)) = (pool_id, &self.hub) {
             if hub.has_runner(pid) {
@@ -396,7 +524,11 @@ impl ScenarioRunner {
                 }
             }
         }
-        let status = match self.executor.run(report_id, nodes, env, false).await {
+        let status = match self
+            .executor_for(scenario_id, project_id, environment_id)
+            .run(report_id, nodes, env, false)
+            .await
+        {
             Ok(true) => "SUCCESS",
             _ => "ERROR",
         };
@@ -414,9 +546,11 @@ impl ScenarioRunner {
         environment_id: Option<&str>,
         stop_on_failure: bool,
         pool_id: Option<&str>,
+        triggered_by: &str,
     ) -> Result<RunOutcome, RunError> {
-        let started =
-            self.begin(scenario_id, project_id, environment_id, stop_on_failure, pool_id).await?;
+        let started = self
+            .begin(scenario_id, project_id, environment_id, stop_on_failure, pool_id, triggered_by)
+            .await?;
         let status = started.fut.await;
         // Read after completion: the future clears the slot on local fallback.
         let executed_on =
@@ -430,34 +564,78 @@ impl ScenarioRunner {
     }
 }
 
-/// In-app message to the scenario creator when a direct run fails; best-effort.
-async fn notify_scenario_failure(
+enum ScenarioNoticeTarget<'a> {
+    Single(&'a str),
+    Batch(&'a str),
+}
+
+async fn notify_scenario_result(
     pool: &migrate::PgPool,
     notifier: &notice::application::Notifier,
-    scenario_id: &str,
+    target: ScenarioNoticeTarget<'_>,
     project_id: &str,
     report_id: &str,
+    status: &str,
+    triggered_by: &str,
 ) {
+    use crate::scenario_notice::{scenario_notice_content, NoticeCase};
     use sqlx::Row as _;
-    let row = sqlx::query("SELECT name, created_by FROM ms_api_scenario WHERE id = $1")
-        .bind(scenario_id)
-        .fetch_optional(pool)
-        .await;
-    let Ok(Some(row)) = row else { return };
-    let Ok(Some(creator)) = row.try_get::<Option<String>, _>("created_by") else { return };
-    let name: String = row.try_get("name").unwrap_or_else(|_| scenario_id.to_string());
+    let (name, receiver, resource_type, resource_id) = match target {
+        ScenarioNoticeTarget::Single(scenario_id) => {
+            let row = sqlx::query_as::<_, (String, Option<String>)>(
+                "SELECT name, created_by FROM ms_api_scenario WHERE id = $1 AND project_id = $2",
+            )
+            .bind(scenario_id)
+            .bind(project_id)
+            .fetch_optional(pool)
+            .await;
+            let Ok(Some((name, creator))) = row else { return };
+            (name, creator.unwrap_or_else(|| triggered_by.to_owned()), "SCENARIO", scenario_id)
+        }
+        ScenarioNoticeTarget::Batch(name) => {
+            let title = if name.is_empty() { "批量场景执行" } else { name };
+            (title.to_owned(), triggered_by.to_owned(), "SCENARIO_BATCH", report_id)
+        }
+    };
+    let rows = sqlx::query(
+        "SELECT COALESCE(c.name, r.case_id) AS name, r.outcome, r.assertions, r.status_code
+         FROM ms_api_case_result r LEFT JOIN ms_api_case c ON c.id = r.case_id
+         WHERE r.report_id = $1 ORDER BY r.executed_at, r.case_id",
+    )
+    .bind(report_id)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
+    let cases: Vec<_> = rows
+        .iter()
+        .map(|row| NoticeCase {
+            name: row.try_get("name").unwrap_or_default(),
+            outcome: row.try_get("outcome").unwrap_or_default(),
+            assertions: row.try_get("assertions").unwrap_or_default(),
+            status_code: row.try_get("status_code").ok().flatten(),
+        })
+        .collect();
+    let report_url = notice::adapters::report_address::effective(pool).await.map(|base| {
+        format!("{}/share/report/{report_id}?access=project", base.trim_end_matches('/'))
+    });
+    let content = scenario_notice_content(status, &cases, report_url.as_deref());
     notifier
         .notify(
-            vec![creator],
+            vec![receiver],
             notice::application::NoticeEvent {
                 project_id: project_id.to_string(),
                 category: "API".into(),
-                event_type: "SCENARIO_RUN_FAILED".into(),
+                event_type: if status == "SUCCESS" {
+                    "SCENARIO_RUN_SUCCEEDED"
+                } else {
+                    "SCENARIO_RUN_FAILED"
+                }
+                .into(),
                 title: name,
-                content: format!("report {report_id}"),
-                resource_type: "SCENARIO".into(),
-                resource_id: scenario_id.to_string(),
-                operator: String::new(),
+                content,
+                resource_type: resource_type.into(),
+                resource_id: resource_id.to_owned(),
+                operator: triggered_by.to_owned(),
             },
         )
         .await;
@@ -484,7 +662,9 @@ fn collect_leaf_ids(nodes: &[PlanNode], out: &mut Vec<String>) {
     for n in nodes {
         match n {
             PlanNode::Leaf(Leaf::Case { case_id }) => out.push(case_id.clone()),
-            PlanNode::Leaf(Leaf::Request { label, .. }) => out.push(label.clone()),
+            PlanNode::Leaf(Leaf::Request { label, .. }) | PlanNode::Plugin { label, .. } => {
+                out.push(label.clone())
+            }
             PlanNode::Loop { body, .. }
             | PlanNode::If { body, .. }
             | PlanNode::Once { body, .. } => collect_leaf_ids(body, out),
@@ -506,6 +686,9 @@ fn plan_to_wire<'a>(
             out.push(match n {
                 PlanNode::Leaf(Leaf::Case { case_id }) => {
                     let spec = specs.spec_of(case_id).await.map_err(|_| ())?.ok_or(())?;
+                    if api_runner::domain::preparation::needs_plugin_preparation(&spec.processors) {
+                        return Err(());
+                    }
                     WireNode::Step {
                         id: case_id.clone(),
                         request: spec.request,
@@ -514,6 +697,9 @@ fn plan_to_wire<'a>(
                     }
                 }
                 PlanNode::Leaf(Leaf::Request { label, request, assertions, processors }) => {
+                    if api_runner::domain::preparation::needs_plugin_preparation(processors) {
+                        return Err(());
+                    }
                     WireNode::Step {
                         id: label.clone(),
                         request: request.clone(),
@@ -534,6 +720,7 @@ fn plan_to_wire<'a>(
                     WireNode::Once { id: *id, body: plan_to_wire(body, specs).await? }
                 }
                 PlanNode::Timer { ms } => WireNode::Timer { ms: *ms },
+                PlanNode::Plugin { .. } => return Err(()),
             });
         }
         Ok(out)
@@ -550,12 +737,117 @@ pub fn router(runner: ScenarioRunner, sessions: Arc<dyn SessionStore>) -> Router
     let reports = runner.reports.clone();
     Router::new()
         .route("/api/scenario/{id}/run", post(run_scenario))
+        .route("/api/case/{id}/run-scripted", post(run_scripted_case))
         .route("/api/scenario/batch-run", post(batch_run_scenarios))
+        .route("/api/scenario/regression-activity", get(regression_activity))
         .route("/api/scenario-report/{report_id}", get(scenario_report))
         .route("/api/scenario-report/{report_id}/share", post(create_scenario_share))
         // Public: no auth — resolves a share token to the report. Mounted here so it shares state.
         .route("/public/scenario-report/{token}", get(public_scenario_report))
         .with_state(RunState { runner, reports, sessions })
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ScriptedCaseBody {
+    project_id: String,
+    environment_id: Option<String>,
+}
+
+async fn run_scripted_case(
+    user: AuthUser,
+    State(state): State<RunState>,
+    Path(case_id): Path<String>,
+    Json(body): Json<ScriptedCaseBody>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    if !user.can("API_DEFINITION", "EXECUTE") {
+        return Err(StatusCode::FORBIDDEN);
+    }
+    let belongs: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM ms_api_case WHERE id=$1 AND project_id=$2)",
+    )
+    .bind(&case_id)
+    .bind(&body.project_id)
+    .fetch_one(&state.runner.pool)
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if !belongs {
+        return Err(StatusCode::NOT_FOUND);
+    }
+    let spec = state
+        .runner
+        .specs
+        .spec_of(&case_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    if !spec.processors.iter().any(|p| matches!(p, api_runner::Processor::SandboxScript { .. })) {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let environment = body.environment_id.as_deref();
+    let env = state.runner.resolve_env(environment).await.map_err(|_| StatusCode::BAD_REQUEST)?;
+    let Some(resolver) = state.runner.preparation.clone() else {
+        return Err(StatusCode::SERVICE_UNAVAILABLE);
+    };
+    let report =
+        state.reports.create("SERIAL", 1).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let executor = state.runner.executor.clone().with_preparation(Arc::new(ScenarioPreparation {
+        resolver,
+        pool: state.runner.pool.clone(),
+        scenario_id: None,
+        actor: user,
+        project_id: body.project_id,
+        environment_id: body.environment_id,
+    }));
+    let nodes = [PlanNode::Leaf(Leaf::Case { case_id })];
+    let status = if executor.run(&report, &nodes, &env, true).await.unwrap_or(false) {
+        "SUCCESS"
+    } else {
+        "ERROR"
+    };
+    state
+        .reports
+        .set_status(&report, status)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(serde_json::json!({ "reportId": report, "status": status })))
+}
+
+#[derive(Deserialize)]
+struct RegressionActivityQuery {
+    days: u16,
+}
+
+#[derive(Serialize, sqlx::FromRow)]
+struct RegressionActivityDay {
+    member: String,
+    date: String,
+    passed: i64,
+    evaluated: i64,
+}
+
+async fn regression_activity(
+    user: AuthUser,
+    State(state): State<RunState>,
+    Query(query): Query<RegressionActivityQuery>,
+) -> Result<Json<Vec<RegressionActivityDay>>, StatusCode> {
+    if !user.can("PROJECT", "READ") || !user.can("API_SCENARIO", "READ") {
+        return Err(StatusCode::FORBIDDEN);
+    }
+    if !(1..=365).contains(&query.days) {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    sqlx::query_as(include_str!("regression_activity.sql"))
+        .bind(&user.user_id)
+        .bind(i32::from(query.days))
+        .bind(user.can("SYSTEM_USER", "UPDATE"))
+        .fetch_all(&state.runner.pool)
+        .await
+        .map(Json)
+        .map_err(|error| {
+            tracing::error!(%error, "Could not read regression activity");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
@@ -621,12 +913,13 @@ async fn effective_env(
 #[utoipa::path(post, path = "/api/scenario/batch-run", tag = "api-scenario", request_body = BatchRunBody, responses((status = 200, body = BatchRunResponse), (status = 400), (status = 403)), security(("bearer" = [])))]
 async fn batch_run_scenarios(
     user: AuthUser,
-    State(st): State<RunState>,
+    State(mut st): State<RunState>,
     Json(b): Json<BatchRunBody>,
 ) -> Response {
     if !user.can("API_SCENARIO", "EXECUTE") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
+    st.runner.actor = Some(user.clone());
     if b.scenario_ids.is_empty() {
         return (StatusCode::BAD_REQUEST, "scenarioIds required").into_response();
     }
@@ -733,6 +1026,7 @@ async fn batch_run_scenarios(
                                 count,
                                 &env,
                                 pid.as_deref(),
+                                env_id.as_deref(),
                             )
                             .await
                     }),
@@ -766,7 +1060,16 @@ async fn batch_run_scenarios(
                 let env = st.runner.resolve_env(env_id.as_deref()).await.unwrap_or_default();
                 let status = st
                     .runner
-                    .run_union_member(&report_id, sid, &b.project_id, nodes, *count, &env, pool_id)
+                    .run_union_member(
+                        &report_id,
+                        sid,
+                        &b.project_id,
+                        nodes,
+                        *count,
+                        &env,
+                        pool_id,
+                        env_id.as_deref(),
+                    )
                     .await;
                 if status == "SUCCESS" {
                     success += 1;
@@ -780,8 +1083,21 @@ async fn batch_run_scenarios(
                 });
             }
         }
-        let overall = if success == prepared_len { "SUCCESS" } else { "ERROR" };
-        let _ = st.reports.set_status(&report_id, overall).await;
+        let overall = if success == b.scenario_ids.len() { "SUCCESS" } else { "ERROR" };
+        if st.reports.set_status(&report_id, overall).await.is_ok() {
+            if let Some(notifier) = &st.runner.notifier {
+                notify_scenario_result(
+                    &st.runner.pool,
+                    notifier,
+                    ScenarioNoticeTarget::Batch(name),
+                    &b.project_id,
+                    &report_id,
+                    overall,
+                    &user.user_id,
+                )
+                .await;
+            }
+        }
         return Json(BatchRunResponse {
             status: overall.to_string(),
             report_id: Some(report_id),
@@ -806,11 +1122,13 @@ async fn batch_run_scenarios(
             let project = b.project_id.clone();
             let override_env = override_env.map(|s| s.to_string());
             let pool = pool_id.map(str::to_string);
+            let trigger = user.user_id.clone();
             handles.push(tokio::spawn(async move {
                 let _permit = sem.acquire().await;
                 let env_id = effective_env(&runner, override_env.as_deref(), &sid).await;
-                let out =
-                    runner.run(&sid, &project, env_id.as_deref(), false, pool.as_deref()).await;
+                let out = runner
+                    .run(&sid, &project, env_id.as_deref(), false, pool.as_deref(), &trigger)
+                    .await;
                 (sid, out)
             }));
         }
@@ -846,7 +1164,11 @@ async fn batch_run_scenarios(
                 continue;
             }
             let env_id = effective_env(&st.runner, override_env, sid).await;
-            match st.runner.run(sid, &b.project_id, env_id.as_deref(), false, pool_id).await {
+            match st
+                .runner
+                .run(sid, &b.project_id, env_id.as_deref(), false, pool_id, &user.user_id)
+                .await
+            {
                 Ok(o) => {
                     if o.status == "SUCCESS" {
                         success += 1;
@@ -961,8 +1283,11 @@ async fn build_scenario_report(
     st: &RunState,
     report_id: String,
 ) -> Result<Option<ScenarioReportResponse>, ()> {
-    let name = sqlx::query_scalar::<_, String>(
-        "SELECT COALESCE(name, '') FROM ms_api_batch_report WHERE id = $1",
+    let (name, scenario_id) = sqlx::query_as::<_, (String, Option<String>)>(
+        "SELECT COALESCE(report.name, ''), (
+             SELECT execution.scenario_id FROM ms_api_scenario_execution execution
+             WHERE execution.report_id = report.id ORDER BY execution.created_at DESC LIMIT 1
+         ) FROM ms_api_batch_report report WHERE report.id = $1",
     )
     .bind(&report_id)
     .fetch_optional(&st.runner.pool)
@@ -979,7 +1304,7 @@ async fn build_scenario_report(
             started_at: d.started_at,
             finished_at: d.finished_at,
             duration_ms: d.duration_ms,
-            scenario_id: None,
+            scenario_id,
             results: d
                 .results
                 .into_iter()
@@ -1026,44 +1351,50 @@ async fn scenario_report(
 #[serde(rename_all = "camelCase")]
 struct ShareResponse {
     token: String,
+    expires_at: i64,
 }
 
 #[derive(Debug, Default, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct ShareBody {
-    /// Owning scenario (from the report modal) — stored so the public page can render the step tree.
-    #[serde(default)]
-    scenario_id: Option<String>,
+    expires_in_days: Option<i32>,
 }
 
 /// Create a public share link for a scenario report. Requires auth; the returned token maps
 /// to this report and can then be read anonymously via `/public/scenario-report/{token}`.
-#[utoipa::path(post, path = "/api/scenario-report/{report_id}/share", tag = "api-scenario", params(("report_id" = String, Path)), request_body = ShareBody, responses((status = 200, body = ShareResponse), (status = 404)), security(("bearer" = [])))]
+#[utoipa::path(post, path = "/api/scenario-report/{report_id}/share", tag = "api-scenario", params(("report_id" = String, Path)), request_body = ShareBody, responses((status = 200, body = ShareResponse), (status = 400), (status = 404)), security(("bearer" = [])))]
 async fn create_scenario_share(
     user: AuthUser,
     State(st): State<RunState>,
     Path(report_id): Path<String>,
     body: Option<Json<ShareBody>>,
 ) -> Response {
-    // The report must exist (and be readable) before we mint a public link for it.
-    match build_scenario_report(&st, report_id.clone()).await {
-        Ok(Some(_)) => {}
+    let days = body.and_then(|body| body.0.expires_in_days).unwrap_or(7);
+    if !(1..=365).contains(&days) {
+        return (StatusCode::BAD_REQUEST, "Share validity must be between 1 and 365 days")
+            .into_response();
+    }
+    let scenario_id = match build_scenario_report(&st, report_id.clone()).await {
+        Ok(Some(report)) => report.scenario_id,
         Ok(None) => return (StatusCode::NOT_FOUND, "report not found").into_response(),
         Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
-    }
-    let scenario_id = body.and_then(|b| b.0.scenario_id);
-    let token = sqlx::query_scalar::<_, String>(
-        "INSERT INTO ms_report_share (token, report_type, report_id, scenario_id, created_by, created_at) \
-         VALUES (gen_random_uuid()::text, 'scenario', $1, $2, $3, (extract(epoch from now())*1000)::bigint) \
-         RETURNING token",
+    };
+    let share = sqlx::query_as::<_, (String, i64)>(
+        "INSERT INTO ms_report_share (token, report_type, report_id, scenario_id, created_by, created_at, expires_at)
+         SELECT gen_random_uuid()::text, 'scenario', $1, $2, $3, ts, ts + $4
+         FROM (SELECT (extract(epoch from now()) * 1000)::bigint AS ts) clock
+         RETURNING token, expires_at",
     )
     .bind(&report_id)
     .bind(scenario_id.as_ref())
     .bind(&user.user_id)
+    .bind(i64::from(days) * 86_400_000)
     .fetch_one(&st.runner.pool)
     .await;
-    match token {
-        Ok(token) => (StatusCode::OK, Json(ShareResponse { token })).into_response(),
+    match share {
+        Ok((token, expires_at)) => {
+            (StatusCode::OK, Json(ShareResponse { token, expires_at })).into_response()
+        }
         Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
     }
 }
@@ -1086,8 +1417,8 @@ async fn public_scenario_report(State(st): State<RunState>, Path(token): Path<St
     };
     match build_scenario_report(&st, report_id).await {
         Ok(Some(mut r)) => {
-            r.scenario_id = scenario_id; // lets the public page render the step tree
-            (StatusCode::OK, Json(r)).into_response()
+            r.scenario_id = scenario_id;
+            ([(axum::http::header::CACHE_CONTROL, "no-store")], Json(r)).into_response()
         }
         Ok(None) => (StatusCode::NOT_FOUND, "report not found").into_response(),
         Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
@@ -1188,8 +1519,10 @@ fn to_node(step: &PlanStep, once: &mut u32) -> PlanNode {
                 },
                 assertions: serde_json::from_value::<Vec<Assertion>>(r.assertions.clone())
                     .unwrap_or_default(),
-                processors: serde_json::from_value::<Vec<Processor>>(r.processors.clone())
-                    .unwrap_or_default(),
+                processors: api_runner::domain::preparation::decode_step_processors(
+                    r.processors.clone(),
+                )
+                .unwrap_or_default(),
             })
         }
         PlanStep::Loop { times, body } => {
@@ -1208,6 +1541,26 @@ fn to_node(step: &PlanStep, once: &mut u32) -> PlanNode {
             PlanNode::Once { id: *once, body: to_nodes(body, once) }
         }
         PlanStep::Timer { ms } => PlanNode::Timer { ms: *ms },
+        PlanStep::Script(payload) => PlanNode::Plugin {
+            label: format!(
+                "SCRIPT {}",
+                payload.get("output").and_then(serde_json::Value::as_str).unwrap_or("")
+            ),
+            processor: serde_json::from_value(
+                serde_json::json!({"type":"SandboxScript","args":payload}),
+            )
+            .ok(),
+        },
+        PlanStep::Plugin(step) => PlanNode::Plugin {
+            label: step
+                .as_ref()
+                .map_or_else(|| "PLUGIN".into(), |step| format!("PLUGIN {}", step.output)),
+            processor: step.as_ref().map(|step| api_runner::Processor::Sql {
+                name: step.output.clone(),
+                datasource: step.profile_id.clone(),
+                sql: step.query.clone(),
+            }),
+        },
     }
 }
 
@@ -1216,7 +1569,7 @@ pub(crate) fn count_leaves(nodes: &[PlanNode]) -> usize {
     nodes
         .iter()
         .map(|n| match n {
-            PlanNode::Leaf(_) => 1,
+            PlanNode::Leaf(_) | PlanNode::Plugin { .. } => 1,
             PlanNode::Loop { body, .. }
             | PlanNode::If { body, .. }
             | PlanNode::Once { body, .. } => count_leaves(body),
@@ -1241,13 +1594,14 @@ pub(crate) fn count_leaves(nodes: &[PlanNode]) -> usize {
 )]
 async fn run_scenario(
     user: AuthUser,
-    State(st): State<RunState>,
+    State(mut st): State<RunState>,
     Path(id): Path<String>,
     Json(req): Json<RunScenarioBody>,
 ) -> Response {
     if !user.can("API_SCENARIO", "EXECUTE") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
+    st.runner.actor = Some(user.clone());
     let stop_on_failure = req.failure_strategy.eq_ignore_ascii_case("STOP");
     if req.async_run {
         // Live mode: report id now, execution in the background, events over WS.
@@ -1259,6 +1613,7 @@ async fn run_scenario(
                 req.environment_id.as_deref(),
                 stop_on_failure,
                 req.pool_id.as_deref(),
+                &user.user_id,
             )
             .await
         {
@@ -1296,6 +1651,7 @@ async fn run_scenario(
             req.environment_id.as_deref(),
             stop_on_failure,
             req.pool_id.as_deref(),
+            &user.user_id,
         )
         .await
     {

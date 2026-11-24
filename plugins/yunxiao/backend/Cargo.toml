@@ -11,8 +11,8 @@ async-trait.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
-chrono = { version = "0.4", default-features = false, features = ["std"] }
-sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "json", "migrate", "macros"], optional = true }
+chrono = { version = "0.4", default-features = false, features = ["std", "serde"] }
+sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "json", "chrono", "migrate", "macros"], optional = true }
 axum = { workspace = true, optional = true }
 utoipa = { workspace = true, optional = true }
 webauth = { workspace = true, optional = true, features = ["http"] }

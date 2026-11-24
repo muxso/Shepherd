@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Button, Cascader, Empty, Input, Segmented, Space, Tabs, Tag, Tooltip, Typography } from 'antd'
-import { ShareAltOutlined } from '@ant-design/icons'
-import { message } from '../feedback'
+import ShareReportButton from './ShareReportButton'
 import ResizableDrawer from './ResizableDrawer'
 import { api, type ApiCase, type AssertionResult, type DebugResponse, type ReportResultItem, type ScenarioReportDetail, type ScenarioStep } from '../api'
-import { methodColor, outcomeColor, execStatusLabel } from './tags'
+import ScenarioStepExpand from './ScenarioStepExpand'
+import { outcomeColor, execStatusLabel } from './tags'
 import { DebugResultPanel, type SentRequest } from './ApiSpecPanel'
 import { LatencyStat } from './TimingBreakdown'
 import { useI18n } from '../i18n'
@@ -25,15 +25,17 @@ export const fmtSize = (b: number) =>
 
 const runOutcomeLabel = execStatusLabel
 
-export function makeStepMeta(t: TFn): Record<string, { label: string; color: string }> {
+export function makeStepMeta(t: TFn): Record<string, { label: string }> {
   return {
-    REQUEST: { label: t('scenario.stepRequest', '请求'), color: 'blue' },
-    CASE: { label: t('scenario.stepCase', '引用用例'), color: 'green' },
-    SCENARIO: { label: t('scenario.stepScenario', '引用场景'), color: 'geekblue' },
-    LOOP: { label: t('scenario.stepLoop', '循环控制器'), color: 'purple' },
-    IF: { label: t('scenario.stepIf', '条件控制器'), color: 'magenta' },
-    ONCE: { label: t('scenario.stepOnce', '仅一次控制器'), color: 'cyan' },
-    TIMER: { label: t('scenario.stepTimer', '等待时间'), color: 'orange' },
+    REQUEST: { label: t('scenario.stepRequest', '请求') },
+    CASE: { label: t('scenario.stepCase', '引用用例') },
+    SCENARIO: { label: t('scenario.stepScenario', '引用场景') },
+    LOOP: { label: t('scenario.stepLoop', '循环控制器') },
+    IF: { label: t('scenario.stepIf', '条件控制器') },
+    ONCE: { label: t('scenario.stepOnce', '仅一次控制器') },
+    SCRIPT: { label: '脚本步骤' },
+    PLUGIN: { label: t('scenario.stepPlugin', '插件操作') },
+    TIMER: { label: t('scenario.stepTimer', '等待时间') },
   }
 }
 
@@ -41,7 +43,7 @@ export function makeStepMeta(t: TFn): Record<string, { label: string; color: str
 // missing values render as an em dash.
 // 4-state distribution: pass / false positive / fail / not run (mirrors the reference report).
 type Dist = { pass: number; falsePos: number; fail: number; skip: number }
-const DIST_COLORS = { pass: '#22c55e', falsePos: '#f59e0b', fail: '#ef4444', skip: '#c9cdd4' }
+const DIST_COLORS = { pass: 'var(--success)', falsePos: '#f59e0b', fail: 'var(--error)', skip: '#c9cdd4' }
 function StatRing({ d, centerLabel, labels }: { d: Dist; centerLabel: string; labels: Record<keyof Dist, string> }) {
   const total = d.pass + d.falsePos + d.fail + d.skip
   const C = 2 * Math.PI * 42
@@ -140,7 +142,7 @@ const reportReqNode = (key: string, method: string, url: string): RTNode => ({
   leaf: true,
   match: { method, url },
   text: `${method} ${url}`,
-  content: <Space><Tag color={methodColor(method)} style={{ margin: 0 }}>{method}</Tag><span className="ms-mono">{url}</span></Space>,
+  content: <Space><Tag className="ms-step-method">{method}</Tag><span className="ms-mono">{url}</span></Space>,
 })
 
 function buildScenarioNodes(id: string, prefix: string, ctx: ReportTreeCtx, depth: number, stack: string[]): RTNode[] {
@@ -171,6 +173,11 @@ function buildReportChildNode(c: any, key: string, ctx: ReportTreeCtx, depth: nu
   return buildReportControlNode(kind, c, key, ctx, depth, stack)
 }
 
+export function pluginResultKey(payload: unknown, kind = 'PLUGIN') {
+  const output = (payload as { output?: string } | null)?.output
+  return output ? `${kind} ${output}` : kind
+}
+
 function buildReportControlNode(kind: string, payload: any, key: string, ctx: ReportTreeCtx, depth: number, stack: string[]): RTNode {
   const { t } = ctx
   const raw = Array.isArray(payload?.children) ? payload.children : []
@@ -195,6 +202,10 @@ function buildReportControlNode(kind: string, payload: any, key: string, ctx: Re
     return { key, kind: 'IF', text: label, content: <span className="ms-mono">{label}</span>, children: buildKids(key, !!ctx.onceRepeat) }
   }
   if (kind === 'ONCE') return { key, kind: 'ONCE', text: '', content: t('scenario.onceOnly', '仅执行一次'), noExec: ctx.onceRepeat, children: buildKids(key, !!ctx.onceRepeat) }
+  if (kind === 'PLUGIN' || kind === 'SCRIPT') {
+    const label = pluginResultKey(payload, kind)
+    return { key, kind, leaf: true, text: label, match: { caseId: label }, content: `${kind === 'SCRIPT' ? '脚本' : '只读 SQL'} · 输出 ${payload?.output || '—'}` }
+  }
   if (kind === 'TIMER') return { key, kind: 'TIMER', text: '', content: `${t('scenario.waitPrefix', '等待')} ${payload?.ms ?? 0} ms` }
   return { key, kind, text: '', content: '—' }
 }
@@ -256,7 +267,7 @@ function ResultCluster({ r, t }: { r: ReportResultItem; t: TFn }) {
   return (
     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 10 }}>
       <Tag color={ok ? 'green' : 'red'} style={{ margin: 0 }}>{ok ? t('scenario.pass', '通过') : t('scenario.fail', '失败')}</Tag>
-      {r.statusCode != null && <Tooltip title={t('scenario.statusTip', '服务端返回的 HTTP 状态码')}><span style={muted}>{t('apidef.statusCode', '状态码')} <span style={{ color: r.statusCode < 400 ? 'var(--success)' : 'var(--error)' }}>{r.statusCode}</span></span></Tooltip>}
+      {(r.statusCode ?? 0) > 0 && <Tooltip title={t('scenario.statusTip', '服务端返回的 HTTP 状态码')}><span style={muted}>{t('apidef.statusCode', '状态码')} <span style={{ color: (r.statusCode ?? 0) < 400 ? 'var(--success)' : 'var(--error)' }}>{r.statusCode}</span></span></Tooltip>}
       {r.timings ? (
         <LatencyStat totalMs={r.latencyMs ?? 0} timings={r.timings}>
           <span style={muted}>{t('scenario.respTime', '响应时间')} {r.latencyMs != null ? fmtDuration(r.latencyMs) : '—'}</span>
@@ -303,11 +314,11 @@ function ReportTreeRows({ nodes, depth, view, t, caseOf, expandedKeys, openKeys,
               style={{ marginLeft: depth * 24, border: '1px solid var(--border-soft)', borderRadius: 6, marginBottom: 6, background: depth ? 'var(--panel-2)' : 'var(--panel)', cursor: clickable ? 'pointer' : 'default' }}
             >
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px' }}>
-                {clickable
-                  ? <span style={{ color: 'var(--text-3)', fontSize: 11, width: 12 }}>{(hasKids ? isExpanded : isOpen) ? '▾' : '▸'}</span>
-                  : <span style={{ width: 12 }} />}
+                <ScenarioStepExpand expanded={hasKids ? isExpanded : isOpen}
+                  label={hasKids ? (isExpanded ? '收起子步骤' : '展开子步骤') : (isOpen ? '收起响应明细' : '展开响应明细')}
+                  onToggle={clickable ? () => hasKids ? onExpand(n.key) : onOpen(n.key) : undefined} />
                 <span style={{ color: 'var(--text-3)', fontSize: 12, minWidth: 18 }}>{i + 1}</span>
-                {meta && <Tag color={meta.color} style={{ margin: 0 }}>{meta.label}</Tag>}
+                {meta && <Tag className="ms-step-kind">{meta.label}</Tag>}
                 <span style={{ flex: 1, minWidth: 0, fontWeight: n.kind === 'ITER' ? 500 : undefined }}>{n.content}</span>
                 {n.leaf && (r ? <ResultCluster r={r} t={t} /> : <Tag style={{ margin: 0, color: 'var(--text-3)' }}>{t('scenario.skip', '未执行')}</Tag>)}
               </div>
@@ -466,7 +477,7 @@ export function ScenarioReportBody({ data, scenarioId, nameOf, caseMap, fetchSce
               </h3>
               {stat(t('scenario.reportTotalTime', '报告总耗时'), <Tooltip title={t('scenario.reportTotalTip', '从第一步开始到最后一步完成的墙钟总耗时')}><span>{(reportTotalMs / 1000).toFixed(3)} <span style={{ color: 'var(--text-3)', fontWeight: 400 }}>(sec)</span></span></Tooltip>)}
               {stat(t('scenario.reqTotalTime', '请求总耗时'), <Tooltip title={t('scenario.respTimeTip', '从建立连接到收到服务端完整响应的全链路耗时')}><span>{fmtDuration(reqTotalMs)}</span></Tooltip>)}
-              {stat(t('scenario.assertPassRate', '断言通过率'), <Tooltip title={t('scenario.assertRateTip', '通过断言数占全部断言数的比例')}><span>{asRate.toFixed(2)} <span style={{ color: 'var(--text-3)', fontWeight: 400 }}>(%)</span></span></Tooltip>, asRate >= 100 ? '#22c55e' : undefined)}
+              {stat(t('scenario.assertPassRate', '断言通过率'), <Tooltip title={t('scenario.assertRateTip', '通过断言数占全部断言数的比例')}><span>{asRate.toFixed(2)} <span style={{ color: 'var(--text-3)', fontWeight: 400 }}>(%)</span></span></Tooltip>, asRate >= 100 ? 'var(--success)' : undefined)}
             </div>
             <DistCard title={t('scenario.stepAnalysis', '步骤分析')} d={dist} centerLabel={t('scenario.totalCount', '总数(个)')} t={t} />
             <DistCard title={t('scenario.reqAnalysis', '请求分析')} d={dist} centerLabel={t('scenario.totalCount', '总数(个)')} t={t} />
@@ -582,7 +593,7 @@ export function ScenarioReportModal({ reportId, scenarioId, nameOf, caseMap, onC
       onClose={onClose}
       width="60%"
       title={data?.name ? `${t('scenario.report', '场景报告')} · ${data.name}` : t('scenario.report', '场景报告')}
-      styles={{ body: { background: 'var(--panel-2)' } }}
+      styles={{ body: { background: 'var(--panel-2)', overflowY: 'auto', paddingBottom: 32 } }}
     >
       {loading ? (
         <div style={{ padding: 32, color: 'var(--text-3)' }}>{t('a.loading', '加载中…')}</div>
@@ -591,21 +602,7 @@ export function ScenarioReportModal({ reportId, scenarioId, nameOf, caseMap, onC
       ) : (
         <>
           <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
-            <Button
-              icon={<ShareAltOutlined />}
-              onClick={async () => {
-                if (!reportId) return
-                try {
-                  const { token } = await api.shareScenarioReport(reportId, scenarioId)
-                  await navigator.clipboard?.writeText(`${window.location.origin}/share/scenario/${token}`)
-                  message.success(t('report.shareCopied', '分享链接已复制,无需登录即可访问'))
-                } catch {
-                  message.error(t('report.shareFailed', '生成分享链接失败'))
-                }
-              }}
-            >
-              {t('report.share', '分享报告')}
-            </Button>
+            {reportId && <ShareReportButton createShare={(days) => api.shareScenarioReport(reportId, days)} />}
           </div>
           <ScenarioReportBody data={data} scenarioId={scenarioId} nameOf={nameOf} caseMap={caseMap} />
         </>

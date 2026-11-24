@@ -66,10 +66,21 @@ pub fn render(
             break;
         };
         let name = after[..end].trim();
-        let value = variables
-            .get(name)
-            .ok_or_else(|| TemplateError::MissingVariable(name.chars().take(128).collect()))?;
-        append(&mut out, value, max)?;
+        if let Some(value) = variables.get(name) {
+            append(&mut out, value, max)?;
+        } else if let Some((variable, pointer)) = name.split_once('#') {
+            let value = variables
+                .get(variable)
+                .and_then(|value| serde_json::from_str::<serde_json::Value>(value).ok())
+                .and_then(|value| value.pointer(pointer).cloned())
+                .ok_or_else(|| TemplateError::MissingVariable(name.chars().take(128).collect()))?;
+            match value {
+                serde_json::Value::String(value) => append(&mut out, &value, max)?,
+                value => append(&mut out, &value.to_string(), max)?,
+            }
+        } else {
+            return Err(TemplateError::MissingVariable(name.chars().take(128).collect()));
+        }
         rest = &after[end + close.len()..];
     }
     Ok(out)
@@ -132,13 +143,58 @@ pub fn prepare_request(
     }
     Ok(spec)
 }
-/// Legacy runners must fail before IO until they share the plugin preparation pipeline.
+pub fn render_assertions(
+    assertions: &mut [super::Assertion],
+    variables: &BTreeMap<String, String>,
+    max: usize,
+) -> Result<(), TemplateError> {
+    use super::Assertion;
+
+    let mut remaining = max;
+    for assertion in assertions {
+        let expected = match assertion {
+            Assertion::JsonFieldEquals { expected, .. }
+            | Assertion::JsonPath { expected, .. }
+            | Assertion::ResponseBody { expected, .. }
+            | Assertion::Variable { expected, .. }
+            | Assertion::BodyContains(expected) => expected,
+            _ => continue,
+        };
+        *expected = render(expected, variables, remaining)?;
+        remaining -= expected.len();
+    }
+    Ok(())
+}
+
+pub fn decode_step_processors(
+    processors: serde_json::Value,
+) -> Result<Vec<super::Processor>, serde_json::Error> {
+    let processors: Vec<serde_json::Value> = serde_json::from_value(processors)?;
+    processors
+        .into_iter()
+        .map(|processor| {
+            let phase = processor.get("phase").or_else(|| processor.pointer("/args/phase"));
+            if phase.and_then(serde_json::Value::as_str) == Some("post")
+                && matches!(
+                    processor["type"].as_str(),
+                    Some("Plugin" | "Script" | "SandboxScript" | "Sql")
+                )
+            {
+                return Ok(super::Processor::UnsupportedPostProcessing);
+            }
+            serde_json::from_value(processor)
+        })
+        .collect()
+}
+
 pub fn needs_plugin_preparation(processors: &[super::Processor]) -> bool {
     processors.iter().any(|p| {
         matches!(
             p,
-            super::Processor::Plugin { .. }
+            super::Processor::UnsupportedPostProcessing
+                | super::Processor::Plugin { .. }
                 | super::Processor::Script { .. }
+                | super::Processor::SandboxScript { .. }
                 | super::Processor::Sql { .. }
         )
     })
@@ -147,6 +203,38 @@ pub fn needs_plugin_preparation(processors: &[super::Processor]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn decodes_versioned_scripts_and_rejects_post_processing() {
+        let args = serde_json::json!({
+            "mode": "shared", "scriptId": "script-1", "revision": 2,
+            "input": {"limit": 10}, "output": "summary", "phase": "pre",
+        });
+        let mut script = serde_json::json!({"type":"SandboxScript","args":args});
+        let processors = decode_step_processors(serde_json::json!([script])).expect("decode");
+        assert!(matches!(processors.as_slice(), [super::super::Processor::SandboxScript {
+            source: super::super::runner::ScriptSource::Shared { script_id, revision: 2 },
+            output, ..
+        }] if script_id == "script-1" && output == "summary"));
+        assert!(needs_plugin_preparation(&processors));
+        script["args"]["phase"] = serde_json::json!("post");
+        assert_eq!(
+            decode_step_processors(serde_json::json!([script])).expect("decode"),
+            vec![super::super::Processor::UnsupportedPostProcessing],
+        );
+    }
+
+    #[test]
+    fn stored_post_sql_cannot_move_to_the_preparation_phase() {
+        let wire = serde_json::json!([
+            {"type":"Sql","args":{"name":"baseline","datasource":"pg","sql":"SELECT 42","phase":"pre"}},
+            {"type":"Sql","args":{"name":"other","datasource":"pg","sql":"SELECT 1","phase":"post"}}
+        ]);
+        let decoded = decode_step_processors(wire).expect("processors");
+        assert!(matches!(decoded[0], super::super::Processor::Sql { .. }));
+        assert!(matches!(decoded[1], super::super::Processor::UnsupportedPostProcessing));
+    }
+
     #[test]
     fn prepared_urls_keep_absolute_scheme_case_and_leading_path_slashes() {
         let request = super::super::RequestSpec {

@@ -1,14 +1,16 @@
-import { lazy, Suspense, type ReactNode } from 'react'
-import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
-import { Spin } from 'antd'
+import { FeatureAccess } from './components/FeatureAccess'
+import { lazy, Suspense, useEffect, type ReactNode } from 'react'
+import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import { useApp } from './context'
 import { useI18n } from './i18n'
 import Login from './pages/Login'
 import AppShell from './components/AppShell'
+import { PageSkeleton } from './components/Page'
 import { PluginProvider, PluginGuard } from './plugins'
 import { ProjectGuard, LegacyRedirect } from './components/RouteScope'
 
 // Route-level lazy loading: per-page bundles; first paint only downloads login/shell, the rest load on entry.
+const QualityDashboard = lazy(() => import('./plugins/sonar/QualityDashboard'))
 const Devops = lazy(() => import('./plugins/yunxiao/Page'))
 const Plugins = lazy(() => import('./pages/Plugins'))
 const Home = lazy(() => import('./pages/Home'))
@@ -32,6 +34,7 @@ const ProjectAdmin = lazy(() => import('./pages/ProjectAdmin'))
 const ProjectTemplates = lazy(() => import('./pages/ProjectTemplates'))
 const FileManagement = lazy(() => import('./pages/FileManagement'))
 const MessageSettings = lazy(() => import('./pages/MessageSettings'))
+const ProjectScripts = lazy(() => import('./pages/ProjectScripts'))
 const ComingSoon = lazy(() => import('./pages/ComingSoon'))
 const Agents = lazy(() => import('./pages/Agents'))
 const TaskCenter = lazy(() => import('./pages/TaskCenter'))
@@ -41,6 +44,7 @@ const ResourcePoolsPage = lazy(() => import('./pages/ResourcePoolPage').then((m)
 const ResourcePoolForm = lazy(() => import('./pages/ResourcePoolPage').then((m) => ({ default: m.ResourcePoolForm })))
 const PublicReport = lazy(() => import('./pages/PublicReport'))
 const KnowledgeQA = lazy(() => import('./pages/KnowledgeQA'))
+const SystemLogs = lazy(() => import('./pages/SystemLogs'))
 const SystemParams = lazy(() => import('./pages/SystemParams'))
 
 // UI-only browsing shouldn't be blocked by login: VITE_SKIP_LOGIN=1 skips the login gate (dev builds only; production unaffected).
@@ -50,11 +54,24 @@ export default function App() {
   const { token } = useApp()
   const { t } = useI18n()
   const loc = useLocation()
+  const navigate = useNavigate()
+  const internalReport = /^\/share\/report\/[^/]+\/?$/.test(loc.pathname) && new URLSearchParams(loc.search).get('access') === 'project'
+  useEffect(() => {
+    const key = 'shepherd.reportAfterLogin'
+    if (internalReport && !token) {
+      sessionStorage.setItem(key, loc.pathname + loc.search)
+    } else if (token) {
+      const target = sessionStorage.getItem(key)
+      sessionStorage.removeItem(key)
+      if (!internalReport && target?.startsWith('/share/report/')) navigate(target, { replace: true })
+    }
+  }, [internalReport, token, loc.pathname, loc.search, navigate])
 
-  // Public share pages render standalone — no app shell, no login gate.
+  // Report links use the standalone viewer. Internal links require a session.
   if (loc.pathname.startsWith('/share/')) {
+    if (internalReport && !token && !SKIP_LOGIN) return <Login />
     return (
-      <Suspense fallback={<div style={{ display: 'flex', justifyContent: 'center', paddingTop: 120 }}><Spin size="large" /></div>}>
+      <Suspense fallback={<PageSkeleton />}>
         <Routes>
           <Route path="/share/:kind/:token" element={<PublicReport />} />
           <Route path="*" element={<PublicReport />} />
@@ -78,7 +95,7 @@ export default function App() {
     { path: 'project/templates', element: <ProjectTemplates /> },
     { path: 'project/files', element: <FileManagement /> },
     { path: 'project/messages', element: <MessageSettings /> },
-    { path: 'project/scripts', element: <ComingSoon title={t('proj.scriptTab', '公共脚本')} /> },
+    { path: 'project/scripts', element: <ProjectScripts /> },
     { path: 'project/logs', element: <ComingSoon title={t('proj.logTab', '日志')} /> },
     { path: 'test-plan', element: <TestPlans /> },
     { path: 'perf', element: <Perf /> },
@@ -93,27 +110,28 @@ export default function App() {
 
   return (
     <PluginProvider><AppShell>
-      <Suspense fallback={<div style={{ display: 'flex', justifyContent: 'center', paddingTop: 120 }}><Spin size="large" /></div>}>
+      <Suspense fallback={<PageSkeleton />}>
         <Routes>
           <Route path="/" element={<Navigate to="/home" replace />} />
           {/* Global (project-agnostic) pages */}
           <Route path="/home" element={<Home />} />
+          <Route path="/code-quality" element={<PluginGuard id="sonar"><QualityDashboard /></PluginGuard>} />
           <Route path="/devops" element={<PluginGuard id="yunxiao"><Devops /></PluginGuard>} />
           <Route path="/todo" element={<Todos />} />
           <Route path="/follow" element={<Follows />} />
-          <Route path="/resource-pool" element={<ResourcePoolsPage />} />
-          <Route path="/resource-pool/new" element={<ResourcePoolForm />} />
-          <Route path="/resource-pool/:id/edit" element={<ResourcePoolForm />} />
-          <Route path="/organization" element={<OrganizationsPage />} />
+          <Route path="/resource-pool" element={<FeatureAccess path="/resource-pool"><ResourcePoolsPage /></FeatureAccess>} />
+          <Route path="/resource-pool/new" element={<FeatureAccess path="/resource-pool" action="ADD"><ResourcePoolForm /></FeatureAccess>} />
+          <Route path="/resource-pool/:id/edit" element={<FeatureAccess path="/resource-pool" action="UPDATE"><ResourcePoolForm /></FeatureAccess>} />
+          <Route path="/organization" element={<FeatureAccess path="/organization"><OrganizationsPage /></FeatureAccess>} />
           <Route path="/role" element={<RolesPage />} />
           <Route path="/user" element={<UsersPage />} />
           <Route path="/system/apikeys" element={<ApiKeysPage />} />
-          <Route path="/system/params" element={<SystemParams />} />
+          <Route path="/system/params" element={<FeatureAccess path="/system/params"><SystemParams /></FeatureAccess>} />
           {/* Preserve the old route after moving RAG configuration to system settings. */}
           <Route path="/system/rag" element={<Navigate to="/system/params" replace />} />
-          <Route path="/system/tasks" element={<TaskCenter />} />
-          <Route path="/system/plugins" element={<Plugins />} />
-          <Route path="/system/logs" element={<ComingSoon title={t('sys.logs', '日志')} />} />
+          <Route path="/system/tasks" element={<FeatureAccess path="/system/tasks"><TaskCenter /></FeatureAccess>} />
+          <Route path="/system/plugins" element={<FeatureAccess path="/system/plugins"><Plugins /></FeatureAccess>} />
+          <Route path="/system/logs" element={<FeatureAccess path="/system/logs"><SystemLogs /></FeatureAccess>} />
           {/* Project-scoped canonical routes: /p/:projectId/... behind the access guard */}
           <Route path="/p/:projectId" element={<ProjectGuard />}>
             {projectRoutes.map((r) => (

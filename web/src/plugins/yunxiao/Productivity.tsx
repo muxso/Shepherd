@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { Alert, Button, Card, Empty, Segmented, Select, Table, Popover, Tag, Space } from 'antd'
+import { Button, Card, Empty, Skeleton, Segmented, Select, Table, Popover, Tag, Space } from 'antd'
 import { ReloadOutlined } from '@ant-design/icons'
+import { ReadError } from '../../components/Page'
 import StatisticsNotes from './StatisticsNotes'
 import DayRecords, { type DayCache } from './DayRecords'
 import { devopsApi, type DevopsDashboard, type DevopsSource, type OutputMetric } from './api'
@@ -28,31 +29,32 @@ export default function Productivity({ projectId }: ProductivityProps) {
   const [days, setDays] = useState(30)
   const [data, setData] = useState<DevopsDashboard | null>(null)
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
+  const [error, setError] = useState<unknown>()
   const [revision, setRevision] = useState(0)
   useEffect(() => {
     let live = true
-    setError(''); setLoading(true)
+    setError(undefined); setLoading(true)
     devopsApi.sources().then(result => {
       if (!live) return
       const matching = result.items.filter(item => item.project_id === projectId)
       setSources(matching)
       setSource(current => matching.some(item => item.id === current) ? current : matching[0]?.id || '')
       if (!matching.length) setLoading(false)
-    }).catch(e => { if (live) { setError(String(e.message || e)); setLoading(false) } })
+    }).catch(e => { if (live) { setError(e); setLoading(false) } })
     return () => { live = false }
   }, [projectId, revision])
   useEffect(() => {
     if (!source) return
     let live = true
-    setLoading(true); setData(null); setError('')
+    setLoading(true); setData(null); setError(undefined)
     devopsApi.dashboard(source, days).then(result => { if (live) setData(result) })
-      .catch(e => { if (live) setError(String(e.message || e)) })
+      .catch(e => { if (live) setError(e) })
       .finally(() => { if (live) setLoading(false) })
     return () => { live = false }
   }, [source, days, revision])
   if (!loading && !error && !sources.length) return null
-  if (error) return <Alert type="error" showIcon message="岗位产出读取失败" description={error} />
+  if (error != null) return <Card size="small" title="岗位产出"><ReadError error={error} title="岗位产出读取失败" /></Card>
+  if (loading) return <Card size="small" title="岗位产出"><Skeleton title={false} paragraph={{ rows: 3 }} /></Card>
   if (!data?.productivity) return null
   const info = sources.find(item => item.id === source)!
   return <ProductivityContent key={source} data={data} info={info} controls={<Space size={8} wrap>
@@ -83,13 +85,13 @@ export function ProductivityContent({ data, info, controls, embedded = false }: 
         {controls}
         {!embedded && <StatisticsNotes info={info} data={data} />}
       </Space>}>
-        <div className="yx-output-kpis">
+        <div className="yx-output-kpis ms-summary-motion">
           {config.metrics.map(([key, label]) => { const item = productivity.metrics[key]; return <button type="button" key={key}
             className={`yx-output-kpi ${key === metricKey ? 'selected' : ''}`} aria-pressed={key === metricKey} onClick={() => { setMetricKey(key); setActiveDay(null) }}>
             <span>{label}</span><strong>{item ? number(item.current) : '—'}</strong>{item && <Comparison metric={item} />}
           </button> })}
         </div>
-        <div className="yx-output-charts">
+        <div className="yx-output-charts ms-summary-motion">
           <Card className="yx-output-trend" size="small" title={`${config.metrics.find(([key]) => key === metricKey)?.[1]}趋势`} extra={<span className="yx-muted">每日 · 上海时间</span>}>
             <div className="yx-block-chart" role="img" aria-label={`每日产出趋势，总计 ${metric?.current || 0}`}>
               {metric?.trend.map(point => { const count = Math.ceil(point.value / max * 12); return <Popover key={point.date} trigger={['hover','focus']} placement="top" mouseEnterDelay={0.2}

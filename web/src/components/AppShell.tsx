@@ -1,8 +1,11 @@
+import { canOpenFeature } from './FeatureAccess'
 import { usePlugins } from '../plugins'
+import { devopsApi } from '../plugins/yunxiao/api'
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
-import { Layout, Menu, Select, Button, Space, Tooltip, Avatar, Segmented, Empty, Dropdown, Badge, Tag, Spin } from 'antd'
+import { Layout, Menu, Select, Button, Space, Tooltip, Avatar, Segmented, Empty, Dropdown, Badge, Spin, Input } from 'antd'
 import ResizableDrawer from './ResizableDrawer'
-import { message } from '../feedback'
+import { message, modal } from '../feedback'
+import { copyToClipboard } from '../clipboard'
 import {
   ShareAltOutlined,
   CommentOutlined,
@@ -50,6 +53,7 @@ import { useThemeMode } from '../themeMode'
 import AnimatedLogo from './AnimatedLogo'
 import NewProjectModal from './NewProjectModal'
 import PersonalCenter from './PersonalCenter'
+import NoticeCard from './NoticeCard'
 
 const { Content } = Layout
 
@@ -64,9 +68,11 @@ function noticeRoute(n: Notice): string | null {
       return '/bug'
     case 'CASE_REVIEW':
       return '/review'
+    case 'SCENARIO':
+      return `/api/scenario?scenario=${encodeURIComponent(n.resourceId)}`
     case 'PLAN':
     case 'TEST_PLAN':
-      return `/test-plan?open=${encodeURIComponent(n.resourceId)}`
+      return `/test-plan?open=${encodeURIComponent(n.resourceId)}${n.eventType === 'PLAN_RUN_FINISHED' ? '&report=1' : ''}`
     case 'FUNCTIONAL_CASE':
       return '/functional-case'
     case 'REQUIREMENT':
@@ -100,10 +106,11 @@ const MODULES: ModuleDef[] = [
     key: '/home',
     label: ['nav.home', '首页'],
     icon: <DashboardOutlined />,
-    match: ['/home', '/todo', '/follow', '/devops'],
+    match: ['/home', '/todo', '/follow', '/devops', '/code-quality'],
     children: [
       { key: '/home', icon: <DashboardOutlined />, label: ['m.home', '工作台'] },
       { key: '/devops', icon: <DashboardOutlined />, label: ['devops.nav', '云效研发统计'] },
+      { key: '/code-quality', icon: <SafetyOutlined />, label: ['sonar.nav', '代码质量'] },
       { key: '/todo', icon: <CarryOutOutlined />, label: ['home.todo.nav', '待办'] },
       { key: '/follow', icon: <StarOutlined />, label: ['home.follow.nav', '关注'] },
     ],
@@ -189,8 +196,24 @@ const MODULES: ModuleDef[] = [
 
 export default function AppShell({ children }: { children: ReactNode }) {
   const { enabled } = usePlugins()
-  const modules = MODULES.map(m => ({ ...m, children: m.children.filter(c => c.key !== "/devops" || enabled("yunxiao")) }))
-  const { projects, projectId, setProjectId, logout } = useApp()
+  const { projects, projectId, setProjectId, logout, token, permissions } = useApp()
+  const yunxiaoEnabled = enabled('yunxiao')
+  const [devopsAccessToken, setDevopsAccessToken] = useState('')
+  useEffect(() => {
+    if (!yunxiaoEnabled || !token) return
+    let active = true
+    devopsApi.sources().then(() => {
+      if (active) setDevopsAccessToken(token)
+    }).catch(() => {
+      if (active) setDevopsAccessToken('')
+    })
+    return () => { active = false }
+  }, [yunxiaoEnabled, token])
+  const modules = MODULES.map(m => ({ ...m, children: m.children.filter(c =>
+    (c.key !== '/devops' || (yunxiaoEnabled && !!token && devopsAccessToken === token))
+    && (c.key !== '/code-quality' || enabled('sonar'))
+    && canOpenFeature(permissions, c.key)
+  ) }))
   const { t, lang, setLang } = useI18n()
   const { mode, toggle } = useThemeMode()
   const navigate = useNavigate()
@@ -240,7 +263,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
     if (key === 'all') return msgUnread.total
     return msgUnread.byCategory?.[key.toUpperCase()] ?? 0
   }
-  const openNotice = async (n: Notice) => {
+  const openNotice = async (n: Notice, link?: string) => {
     if (!n.read) {
       try {
         await api.markNoticeRead(n.id)
@@ -248,6 +271,12 @@ export default function AppShell({ children }: { children: ReactNode }) {
         /* best-effort */
       }
       refreshUnread()
+    }
+    if (link) {
+      setMsgOpen(false)
+      const { effectiveBaseUrl } = await api.reportAddress().catch(() => ({ effectiveBaseUrl: null }))
+      window.location.assign(new URL(link, effectiveBaseUrl ?? window.location.origin).href)
+      return
     }
     const route = noticeRoute(n)
     if (route) {
@@ -440,10 +469,18 @@ export default function AppShell({ children }: { children: ReactNode }) {
               <Button
                 type="text"
                 icon={<ShareAltOutlined />}
-                onClick={() => {
-                  navigator.clipboard?.writeText(window.location.href)
-                    .then(() => message.success(t('top.linkCopied', '链接已复制')))
-                    .catch(() => message.error(t('top.copyFailed', '复制失败')))
+                aria-label={t('top.copyLink', '复制当前页面链接(含项目与打开的标签)')}
+                onClick={async () => {
+                  const url = window.location.href
+                  if (await copyToClipboard(url)) {
+                    message.success(t('top.linkCopied', '链接已复制'))
+                  } else {
+                    modal.info({
+                      title: t('top.copyManually', '请手动复制链接'),
+                      content: <Input readOnly aria-label={t('top.pageLink', '当前页面链接')} value={url}
+                        onFocus={event => event.currentTarget.select()} />,
+                    })
+                  }
                 }}
               />
             </Tooltip>
@@ -607,54 +644,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
             ) : (
               <div style={{ flex: 1, overflowY: 'auto', padding: '0 8px 8px' }}>
                 {msgs.map((n) => (
-                  <div
-                    key={n.id}
-                    onClick={() => openNotice(n)}
-                    style={{
-                      display: 'flex',
-                      gap: 10,
-                      alignItems: 'flex-start',
-                      padding: '12px 10px',
-                      borderRadius: 8,
-                      cursor: 'pointer',
-                      borderBottom: '1px solid var(--border-soft)',
-                    }}
-                  >
-                    {/* Unread dot column keeps read rows aligned. */}
-                    <span
-                      style={{
-                        width: 8,
-                        height: 8,
-                        borderRadius: 4,
-                        marginTop: 7,
-                        flexShrink: 0,
-                        background: n.read ? 'transparent' : 'var(--brand)',
-                      }}
-                    />
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        <Tag style={{ marginInlineEnd: 0 }}>{t(`msg.evt.${n.eventType}`, n.eventType)}</Tag>
-                        {n.atMention && <Tag color="blue" style={{ marginInlineEnd: 0 }}>{t('msg.atMe', '@我')}</Tag>}
-                        <span
-                          style={{
-                            fontWeight: n.read ? 400 : 600,
-                            color: 'var(--text)',
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            whiteSpace: 'nowrap',
-                          }}
-                          title={n.title}
-                        >
-                          {n.title}
-                        </span>
-                      </div>
-                      <div style={{ marginTop: 4, fontSize: 12, color: 'var(--text-3)' }}>
-                        {n.operator && <span>{n.operator} · </span>}
-                        {relTime(n.createdAt)}
-                        {n.content && <span> · {n.content}</span>}
-                      </div>
-                    </div>
-                  </div>
+                  <NoticeCard key={n.id} notice={n} projectName={projects.find((project) => project.id === n.projectId)?.name} time={relTime(n.createdAt)} canOpen={Boolean(noticeRoute(n))} onOpen={(link) => openNotice(n, link)} />
                 ))}
               </div>
             )}

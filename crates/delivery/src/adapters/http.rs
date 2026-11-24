@@ -408,7 +408,7 @@ async fn list_tasks(
     State(st): State<DelState>,
     Query(q): Query<TaskQuery>,
 ) -> Response {
-    if !user.can("DELIVERY", "READ") {
+    if !user.can("TASK_CENTER", "READ") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
     let page = q.page.unwrap_or(1).max(1);
@@ -532,7 +532,7 @@ async fn stop(
     Path(id): Path<String>,
     Json(b): Json<StopBody>,
 ) -> Response {
-    if !user.can("DELIVERY", "UPDATE") {
+    if !user.can("TASK_CENTER", "UPDATE") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
     match st.svc.stop(&id, b.reason.as_deref().unwrap_or("")).await {
@@ -550,7 +550,7 @@ async fn delete_attempt(
     State(st): State<DelState>,
     Path(id): Path<String>,
 ) -> Response {
-    if !user.can("DELIVERY", "UPDATE") {
+    if !user.can("TASK_CENTER", "UPDATE") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
     match st.svc.delete(&id).await {
@@ -587,7 +587,7 @@ mod tests {
             Arc::new(StubAgentExecutor::new(behavior)),
         );
         let sessions = Arc::new(InMemorySessionStore::new());
-        let set = PermissionSet::from_raw([perms.to_string()]).expect("perms");
+        let set = PermissionSet::from_raw(perms.split(',')).expect("perms");
         let token = sessions.create("u", set, 3600).await.expect("token");
         (router(svc, sessions), token)
     }
@@ -800,9 +800,11 @@ mod tests {
 
     #[tokio::test]
     async fn task_center_list_stop_and_delete_flow() {
-        let (app, t) =
-            app_with("DELIVERY:READ+EXECUTE+UPDATE", StubBehavior::Accept { run_id: "r".into() })
-                .await;
+        let (app, t) = app_with(
+            "DELIVERY:READ+EXECUTE+UPDATE,TASK_CENTER:READ+UPDATE",
+            StubBehavior::Accept { run_id: "r".into() },
+        )
+        .await;
         for tid in ["t1", "t2"] {
             app.clone()
                 .oneshot(req("POST", "/delivery", &format!(r#"{{"decompositionId":"d1","taskId":"{tid}","title":"build {tid}","executor":"CODEX"}}"#), Some(&t)))
@@ -873,9 +875,11 @@ mod tests {
 
     #[tokio::test]
     async fn delete_running_conflicts_and_rbac() {
-        let (app, t) =
-            app_with("DELIVERY:READ+EXECUTE+UPDATE", StubBehavior::Accept { run_id: "r".into() })
-                .await;
+        let (app, t) = app_with(
+            "DELIVERY:READ+EXECUTE+UPDATE,TASK_CENTER:READ+UPDATE",
+            StubBehavior::Accept { run_id: "r".into() },
+        )
+        .await;
         let r = app
             .clone()
             .oneshot(req(
@@ -896,7 +900,7 @@ mod tests {
             StatusCode::CONFLICT
         );
         let (app2, ro) =
-            app_with("DELIVERY:READ", StubBehavior::Accept { run_id: "r".into() }).await;
+            app_with("DELIVERY:READ+UPDATE", StubBehavior::Accept { run_id: "r".into() }).await;
         assert_eq!(
             app2.oneshot(req("POST", "/delivery/whatever/stop", r#"{}"#, Some(&ro)))
                 .await

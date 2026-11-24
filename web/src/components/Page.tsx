@@ -1,6 +1,31 @@
 import type { ReactNode } from 'react'
-import { Empty, Typography } from 'antd'
+import { Alert, Card, Empty, Skeleton, Typography } from 'antd'
+import { ApiError } from '../api'
 import { useI18n } from '../i18n'
+
+export function AccessDenied({ title, description }: { title?: ReactNode; description?: ReactNode }) {
+  const { t } = useI18n()
+  return <Alert type="warning" showIcon
+    message={title ?? t('common.accessDenied', '没有查看权限')}
+    description={description ?? t('common.askForAccess', '请联系管理员为你的用户组授予相应的查询权限。')} />
+}
+
+export function ReadError({ error, title }: { error: unknown; title: ReactNode }) {
+  if (error instanceof ApiError && error.status === 403) return <AccessDenied />
+  return <Alert type="error" showIcon message={title} />
+}
+
+export function PageSkeleton() {
+  const { t } = useI18n()
+  return (
+    <div role="status" aria-busy="true" aria-label={t('common.loading', '加载中')} data-testid="page-skeleton"
+      style={{ display: 'grid', gap: 12, padding: 16 }}>
+      <Skeleton.Input size="small" style={{ width: 160 }} />
+      <Card size="small"><Skeleton title={false} paragraph={{ rows: 1, width: '48%' }} /></Card>
+      <Card size="small"><Skeleton title={false} paragraph={{ rows: 5, width: ['72%', '92%', '83%', '90%', '61%'] }} /></Card>
+    </div>
+  )
+}
 
 // Shared full-page skeleton:
 //   <PageContainer>            full-height flex column

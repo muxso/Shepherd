@@ -1,3 +1,4 @@
+use std::collections::{HashSet, VecDeque};
 use std::sync::Arc;
 
 use crate::application::{
@@ -480,24 +481,76 @@ async fn public_scenario(
     State(st): State<ScenarioAppState>,
     Path((token, id)): Path<(String, String)>,
 ) -> Response {
-    let valid = sqlx::query_scalar::<_, String>(
-        "SELECT report_id FROM ms_report_share \
-         WHERE token = $1 AND report_type = 'scenario' AND revoked = FALSE \
-           AND (expires_at IS NULL OR expires_at > (extract(epoch from now())*1000)::bigint)",
+    let root = sqlx::query_scalar::<_, String>(
+        "SELECT scenario_id FROM ms_report_share
+         WHERE token = $1 AND report_type = 'scenario' AND revoked = FALSE AND scenario_id IS NOT NULL
+           AND (expires_at IS NULL OR expires_at > (extract(epoch from now()) * 1000)::bigint)",
     )
     .bind(&token)
     .fetch_optional(&st.pool)
-    .await
-    .ok()
-    .flatten()
-    .is_some();
-    if !valid {
-        return (StatusCode::NOT_FOUND, "share not found or expired").into_response();
+    .await;
+    let root = match root {
+        Ok(Some(root)) => root,
+        Ok(None) => return (StatusCode::NOT_FOUND, "share not found or expired").into_response(),
+        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    };
+    let mut pending = VecDeque::from([(root, 0)]);
+    let mut visited = HashSet::new();
+    let mut project_id = None;
+    while let Some((candidate, depth)) = pending.pop_front() {
+        if depth > 5 || !visited.insert(candidate.clone()) {
+            continue;
+        }
+        if visited.len() > 128 {
+            break;
+        }
+        let scenario = match st.get.execute(&candidate).await {
+            Ok(Some(scenario)) => scenario,
+            Ok(None) => continue,
+            Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+        };
+        let project = project_id.get_or_insert_with(|| scenario.project_id.clone());
+        if &scenario.project_id != project {
+            continue;
+        }
+        if candidate == id {
+            return (
+                [(axum::http::header::CACHE_CONTROL, "no-store")],
+                Json(ScenarioResponse::from(scenario)),
+            )
+                .into_response();
+        }
+        for step in scenario.steps {
+            match step.kind {
+                StepKind::Scenario { scenario_id } => pending.push_back((scenario_id, depth + 1)),
+                StepKind::Control { payload, .. } => {
+                    collect_referenced_scenarios(&payload, &mut pending, depth + 1);
+                }
+                _ => {}
+            }
+        }
     }
-    match st.get.execute(&id).await {
-        Ok(Some(s)) => (StatusCode::OK, Json(ScenarioResponse::from(s))).into_response(),
-        Ok(None) => (StatusCode::NOT_FOUND, "scenario not found").into_response(),
-        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    (StatusCode::NOT_FOUND, "scenario not found in shared report").into_response()
+}
+
+fn collect_referenced_scenarios(
+    node: &serde_json::Value,
+    pending: &mut VecDeque<(String, usize)>,
+    depth: usize,
+) {
+    if let Some(children) = node.get("children").and_then(serde_json::Value::as_array) {
+        for child in children {
+            if child
+                .get("kind")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|kind| kind.eq_ignore_ascii_case("SCENARIO"))
+            {
+                if let Some(id) = child.get("refId").and_then(serde_json::Value::as_str) {
+                    pending.push_back((id.to_owned(), depth));
+                }
+            }
+            collect_referenced_scenarios(child, pending, depth);
+        }
     }
 }
 
@@ -645,9 +698,27 @@ fn parse_step_kind(
             Some(scenario_id) => Ok(StepKind::Scenario { scenario_id }),
             None => Err("refId required for SCENARIO"),
         },
-        "LOOP" | "IF" | "ONCE" | "TIMER" => {
+        "LOOP" | "IF" | "ONCE" | "TIMER" | "PLUGIN" | "SCRIPT" => {
             let control_kind = ControlKind::parse(kind).ok_or("unknown control kind")?;
             let payload = control.ok_or("control payload required")?;
+            if control_kind == ControlKind::Plugin
+                && crate::domain::scenario::PluginStep::parse(&payload).is_none()
+            {
+                return Err("invalid plugin step: profile, read-only query and output variable are required");
+            }
+            if control_kind == ControlKind::Script
+                && (!payload.get("input").is_some_and(serde_json::Value::is_object)
+                    || payload
+                        .get("output")
+                        .and_then(serde_json::Value::as_str)
+                        .is_none_or(str::is_empty)
+                    || !matches!(
+                        payload.get("mode").and_then(serde_json::Value::as_str),
+                        Some("custom" | "shared")
+                    ))
+            {
+                return Err("invalid script step configuration");
+            }
             Ok(StepKind::Control { control: control_kind, payload })
         }
         _ => Err("unknown step kind"),

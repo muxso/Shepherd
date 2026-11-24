@@ -66,6 +66,8 @@ impl PlanRunner {
         let scenarios = ScenarioRunner {
             compile: api_scenario::application::CompileScenarioUseCase::new(scenario_repo.clone()),
             executor,
+            preparation: None,
+            actor: None,
             envs: Arc::new(PgEnvironment::new(pool.clone())),
             reports: PgBatchReport::new(pool.clone()),
             recorder: api_scenario::application::RecordScenarioExecutionUseCase::new(scenario_repo),
@@ -113,8 +115,10 @@ impl PlanRunner {
             Some(id) => Some(id.to_string()),
             None => self.scenarios.default_env_of(case_id).await,
         };
-        let started =
-            self.scenarios.begin(case_id, project_id, eff_env.as_deref(), false, pool_id).await?;
+        let started = self
+            .scenarios
+            .begin(case_id, project_id, eff_env.as_deref(), false, pool_id, "")
+            .await?;
         let report_id = started.report_id.clone();
         let cases = self.cases.clone();
         let plan = plan_id.to_string();

@@ -4,13 +4,14 @@ import { Input } from 'antd'
 import { message, modal } from '../../feedback'
 import EditDrawer from '../EditDrawer'
 import ResizableDrawer from '../ResizableDrawer'
-import { PlayCircleOutlined, FileMarkdownOutlined, FileTextOutlined, LinkOutlined, ClockCircleOutlined, ShareAltOutlined } from '@ant-design/icons'
+import { PlayCircleOutlined, FileMarkdownOutlined, FileTextOutlined, LinkOutlined, ClockCircleOutlined } from '@ant-design/icons'
 import { api, ApiError, type ApiCase, type Bug, type PlanCase, type PlanStats, type PlanStepResult, type Scenario } from '../../api'
 import AutoPoolIndicator from '../AutoPoolIndicator'
 import { outcomeColor } from '../tags'
 import Donut from '../Donut'
 import { fmtDurationMs } from '../TimingBreakdown'
 import { ScenarioReportModal } from '../ScenarioReport'
+import ShareReportButton from '../ShareReportButton'
 import { useI18n } from '../../i18n'
 import PlanMindmap from './PlanMindmap'
 import PlanEditDrawer from './PlanEditDrawer'
@@ -237,8 +238,8 @@ function LinkCaseModal({ open, planId, projectId, onClose, onLinked }: { open: b
 
 // Case status palette shared by the report drawer ring + legend.
 const PLAN_STATUS_SEGS = (t: (k: string, d: string) => string) => [
-  { key: 'SUCCESS', label: t('plan.resPass', '通过'), color: '#22c55e' },
-  { key: 'ERROR', label: t('plan.resFail', '不通过'), color: '#ef4444' },
+  { key: 'SUCCESS', label: t('plan.resPass', '通过'), color: 'var(--success)' },
+  { key: 'ERROR', label: t('plan.resFail', '不通过'), color: 'var(--error)' },
   { key: 'FAKE_ERROR', label: t('plan.resFake', '误报'), color: '#f59e0b' },
   { key: 'BLOCK', label: t('plan.resBlock', '阻塞'), color: '#722ed1' },
   { key: 'PENDING', label: t('plan.segPending', '未执行'), color: '#c9cdd4' },
@@ -313,15 +314,6 @@ export function PlanReportDrawer({ open, planId, name, projectId, onClose }: { o
       message.error(e instanceof ApiError ? e.message : t('plan.reportFail', '获取报告失败'))
     }
   }
-  const doShare = async () => {
-    try {
-      const { token } = await api.sharePlanReport(planId)
-      await navigator.clipboard?.writeText(`${window.location.origin}/share/plan/${token}`)
-      message.success(t('report.shareCopied', '分享链接已复制,无需登录即可访问'))
-    } catch (e) {
-      message.error(e instanceof ApiError ? e.message : t('report.shareFailed', '生成分享链接失败'))
-    }
-  }
   const segs = PLAN_STATUS_SEGS(t)
   const countOf = (k: string) => cases.filter((c) => (c.status || 'PENDING').toUpperCase() === k).length
   const total = cases.length || stats?.total || 0
@@ -352,7 +344,7 @@ export function PlanReportDrawer({ open, planId, name, projectId, onClose }: { o
                 {stats && <Tag color={stats.isPass ? 'green' : 'red'} style={{ margin: 0 }}>{stats.isPass ? t('plan.pass', '通过') : t('plan.notPass', '未通过')}</Tag>}
               </h3>
               {statRow(t('plan.duration', '耗时'), fmtDurationMs(totalMs))}
-              {statRow(t('plan.colPassRate', '通过率'), `${((stats?.passRate ?? 0) * 100).toFixed(2)} %`, (stats?.passRate ?? 0) >= 1 ? '#22c55e' : undefined)}
+              {statRow(t('plan.colPassRate', '通过率'), `${((stats?.passRate ?? 0) * 100).toFixed(2)} %`, (stats?.passRate ?? 0) >= 1 ? 'var(--success)' : undefined)}
               {statRow(t('plan.executeRate', '执行完成率'), `${((stats?.executeRate ?? 0) * 100).toFixed(2)} %`)}
               {statRow(t('plan.totalCases', '用例总数'), total)}
             </div>
@@ -376,7 +368,7 @@ export function PlanReportDrawer({ open, planId, name, projectId, onClose }: { o
             <b>{t('plan.reportDetail', '报告明细')}</b>
             <div style={{ flex: 1 }} />
             <Button size="small" icon={<FileMarkdownOutlined />} onClick={exportMd}>{t('plan.exportMd', '导出 Markdown')}</Button>
-            <Button size="small" icon={<ShareAltOutlined />} onClick={doShare}>{t('report.share', '分享报告')}</Button>
+            <ShareReportButton size="small" createShare={(days) => api.sharePlanReport(planId, days)} />
           </div>
           {cases.length === 0 ? (
             <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('plan.noLinkedCase', '未挂用例,点「挂用例」')} />

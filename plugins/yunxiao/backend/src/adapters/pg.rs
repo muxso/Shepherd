@@ -11,6 +11,7 @@ use sqlx::{PgPool, Row};
 #[derive(Clone)]
 pub struct PgStore {
     pool: PgPool,
+    sonar_pool: Option<PgPool>,
     cache: Option<std::sync::Arc<super::statistics_cache::StatisticsCache>>,
     precomputing: bool,
 }
@@ -26,6 +27,37 @@ pub(super) fn db(e: sqlx::Error) -> Error {
 const LATE: &str = "kind='requirement' AND payload->>'priority' IN ('紧急','高','中') AND payload->>'status' NOT IN ('待发布','已发布','已交付','已拒绝','已取消','已完成','已关闭','已验收','完成') AND NULLIF(payload->>'due','')::date < (now() AT TIME ZONE 'Asia/Shanghai')::date";
 #[async_trait]
 impl Store for PgStore {
+    async fn save_sonar_analysis(
+        &self,
+        source: &str,
+        analysis: crate::domain::sonar::Analysis,
+    ) -> Result<Value, Error> {
+        analysis.validate()?;
+        let report = json!(analysis);
+        let result: Option<bool> = sqlx::query_scalar(include_str!("sonar_ingest.sql"))
+            .bind(source)
+            .bind(&analysis.task_id)
+            .bind(&analysis.repository_id)
+            .bind(analysis.pull_request.as_deref().unwrap_or_default())
+            .bind(analysis.revision.to_ascii_lowercase())
+            .bind(analysis.analyzed_at)
+            .bind(&report)
+            .bind(analysis.scope.as_str())
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(db)?;
+        Ok(json!({ "inserted": result.ok_or(Error::NotFound)? }))
+    }
+
+    async fn sonar_analyses(&self, source: &str) -> Result<Value, Error> {
+        sqlx::query_scalar(include_str!("sonar_latest.sql"))
+            .bind(source)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(db)?
+            .ok_or(Error::NotFound)
+    }
+
     async fn asset_export(&self, source: &str) -> Result<Value, Error> {
         sqlx::query_scalar("SELECT jsonb_build_object('sourceId',s.id,'revision',s.last_success_at::text,'records',COALESCE((SELECT jsonb_agg(jsonb_build_object('kind',e.kind,'externalId',e.external_id,'data',e.payload-'raw') ORDER BY e.kind,e.external_id) FROM ms_devops_entity e WHERE e.source_id=s.id AND e.active AND e.kind IN ('requirement','testcase')),'[]'::jsonb)) FROM ms_devops_source s WHERE s.id=$1 AND s.last_success_at IS NOT NULL")
             .bind(source).fetch_optional(&self.pool).await.map_err(db)?.ok_or(Error::NotFound)
@@ -97,10 +129,11 @@ impl Store for PgStore {
         permissions: crate::domain::team_activity::ActivityPermissions,
     ) -> Result<Value, Error> {
         query.validate()?;
+        let sonar_revision = self.sonar_revision(source).await;
         self.cached(
             source,
-            "team-activity",
-            format!("{query:?}/{permissions:?}"),
+            "team-activity-v5",
+            format!("{query:?}/{permissions:?}/{sonar_revision}"),
             self.team_activity_uncached(source, query, permissions),
         )
         .await
@@ -330,10 +363,11 @@ impl Store for PgStore {
         query: MemberMetricsQuery,
     ) -> Result<Value, Error> {
         query.validate()?;
+        let sonar_revision = self.sonar_revision(source).await;
         self.cached(
             source,
-            "member-metrics",
-            format!("{query:?}"),
+            "member-metrics-v5",
+            format!("{query:?}/{sonar_revision}"),
             self.member_metrics_uncached(source, query),
         )
         .await
@@ -433,8 +467,9 @@ impl PgStore {
         };
         let filters = format!("e.source_id=$1 AND e.active AND e.kind=$2 AND (NULLIF(e.payload->>'{field}','')::timestamptz AT TIME ZONE 'Asia/Shanghai')::date BETWEEN $3::date AND $5::date AND ({condition}) AND (COALESCE(e.payload->>'title','') ILIKE $4 OR e.external_id ILIKE $4 OR COALESCE(e.payload->>'serial','') ILIKE $4 OR e.payload->>'author' ILIKE $4 OR e.payload->>'authorRaw' ILIKE $4)");
         let search = format!("%{}%", q.search.unwrap_or_default());
+        let table = records_table(kind);
         let count = sqlx::query_scalar::<_, i64>(&format!(
-            "SELECT count(*) FROM ms_devops_statistics_resolved e WHERE {filters}"
+            "SELECT count(*) FROM {table} e WHERE {filters}"
         ))
         .bind(source)
         .bind(kind)
@@ -446,24 +481,34 @@ impl PgStore {
         .map_err(db)?;
         // Resolve associations inside the plugin database and the same source, including unresolved IDs.
         let order = format!("(NULLIF(e.payload->>'{field}','')::timestamptz) DESC,e.external_id");
-        let rows = sqlx::query_scalar::<_, Value>(&record_query(&filters, &order, "$6", "$7"))
-            .bind(source)
-            .bind(kind)
-            .bind(from.to_string())
-            .bind(&search)
-            .bind(through.to_string())
-            .bind(size)
-            .bind((page - 1).saturating_mul(size))
-            .fetch_all(&self.pool)
-            .await
-            .map_err(db)?;
+        let rows =
+            sqlx::query_scalar::<_, Value>(&record_query(table, &filters, &order, "$6", "$7"))
+                .bind(source)
+                .bind(kind)
+                .bind(from.to_string())
+                .bind(&search)
+                .bind(through.to_string())
+                .bind(size)
+                .bind((page - 1).saturating_mul(size))
+                .fetch_all(&self.pool)
+                .await
+                .map_err(db)?;
         Ok(json!({"total":count,"items":rows,"page":page,"pageSize":size}))
     }
 }
 
-fn record_query(filters: &str, order: &str, limit: &str, offset: &str) -> String {
+fn records_table(kind: &str) -> &'static str {
+    if kind == "commit" {
+        "ms_devops_statistics_resolved"
+    } else {
+        "ms_devops_statistics_entity"
+    }
+}
+
+fn record_query(table: &str, filters: &str, order: &str, limit: &str, offset: &str) -> String {
     format!(
         include_str!("record_select.sql"),
+        table = table,
         filters = filters,
         order = order,
         limit = limit,
@@ -577,8 +622,43 @@ impl PgStore {
         });
     }
     pub fn new(pool: PgPool) -> Self {
-        Self { pool, cache: None, precomputing: false }
+        Self { pool, sonar_pool: None, cache: None, precomputing: false }
     }
+    pub fn with_sonar_pool(mut self, pool: Option<PgPool>) -> Self {
+        self.sonar_pool = pool;
+        self
+    }
+
+    async fn sonar_revision(&self, source: &str) -> String {
+        let Some(pool) = &self.sonar_pool else { return "legacy".into() };
+        sqlx::query_scalar("SELECT md5(COALESCE(string_agg(report::text, '' ORDER BY task_id), '')) FROM ms_sonar_analysis WHERE source_id=$1 AND report ? 'push'")
+            .bind(source).fetch_one(pool).await.unwrap_or_else(|_| "unavailable".into())
+    }
+
+    async fn sonar_inputs(
+        &self,
+        source: &str,
+        month: Option<&str>,
+        days: Option<i32>,
+    ) -> Option<Value> {
+        let pool = self.sonar_pool.as_ref()?;
+        match sqlx::query_scalar(
+            "SELECT COALESCE(jsonb_agg(report), '[]')
+             FROM ms_sonar_analysis
+             WHERE source_id=$1 AND scope='sonar_repository' AND report ? 'push'
+               AND analyzed_at >= COALESCE(
+                 (to_date($2::text,'YYYY-MM')::timestamp AT TIME ZONE 'Asia/Shanghai'),
+                 (((now() AT TIME ZONE 'Asia/Shanghai')::date - COALESCE($3::int-1,31))::timestamp AT TIME ZONE 'Asia/Shanghai')
+               )",
+        ).bind(source).bind(month).bind(days).fetch_one(pool).await {
+            Ok(reports) => Some(reports),
+            Err(error) => {
+                tracing::warn!(%error, "Could not read independent Sonar activity");
+                Some(json!([]))
+            }
+        }
+    }
+
     pub fn with_redis_url(mut self, url: Option<&str>) -> Self {
         self.cache = url.and_then(super::statistics_cache::StatisticsCache::new);
         self
@@ -675,6 +755,36 @@ impl PgStore {
             return self.productivity_records(source, q, size, page).await;
         }
         let kind = q.kind.unwrap_or_else(|| "requirement".into());
+        if let Some(entity_kind @ ("requirement" | "bug")) = kind.strip_prefix("status-dwell-") {
+            let bounds = q
+                .month
+                .as_ref()
+                .filter(|month| !month.is_empty())
+                .map(|month| {
+                    crate::domain::code_authors::CodeAuthorsQuery { month: month.clone() }.bounds()
+                })
+                .transpose()?;
+            return sqlx::query_scalar(include_str!("status_dwell.sql"))
+                .bind(source)
+                .bind(entity_kind)
+                .bind(q.days.unwrap_or(30).clamp(1, 366) as i32)
+                .bind(q.month.is_some())
+                .bind(bounds.map(|(start, _)| start))
+                .bind(bounds.map(|(_, end)| end))
+                .bind(q.search.unwrap_or_default().trim())
+                .bind(size)
+                .bind((page - 1).saturating_mul(size))
+                .bind(q.status.unwrap_or_default())
+                .bind(match q.sort_order.as_deref() {
+                    None | Some("desc") => false,
+                    Some("asc") => true,
+                    _ => return Err(Error::Invalid("invalid status dwell sort order".into())),
+                })
+                .bind(q.current_status.unwrap_or_default())
+                .fetch_one(&self.pool)
+                .await
+                .map_err(db);
+        }
         if kind == "history" || kind == "runs" {
             let table = if kind == "history" { "ms_devops_history" } else { "ms_devops_sync_run" };
             let order = if kind == "history" { "observed_at" } else { "started_at" };
@@ -712,7 +822,7 @@ impl PgStore {
         .fetch_one(&self.pool)
         .await
         .map_err(db)?;
-        let rows=sqlx::query_scalar::<_,Value>(&record_query(&filters,"COALESCE(e.payload->>'authoredAt',e.payload->>'updatedAt',e.payload->>'serial',e.external_id) DESC,e.external_id","$9","$10"))
+        let rows=sqlx::query_scalar::<_,Value>(&record_query("ms_devops_statistics_resolved",&filters,"COALESCE(e.payload->>'authoredAt',e.payload->>'updatedAt',e.payload->>'serial',e.external_id) DESC,e.external_id","$9","$10"))
             .bind(source).bind(&kind).bind(&search).bind(&group).bind(delayed).bind(days).bind(&status).bind(&owner).bind(size).bind((page-1).saturating_mul(size)).fetch_all(&self.pool).await.map_err(db)?;
         let mut result = json!({"total":n,"items":rows,"page":page,"pageSize":size});
         if q.include_owners.unwrap_or(false) {
@@ -728,8 +838,11 @@ impl PgStore {
         query: MemberMetricsQuery,
     ) -> Result<Value, Error> {
         query.validate()?;
+        let sonar = self.sonar_inputs(source, query.month.as_deref(), None).await;
         let snapshot = sqlx::query_scalar::<_, Value>(include_str!("member_metrics.sql"))
             .bind(source)
+            .bind(query.month.as_deref())
+            .bind(sonar)
             .fetch_optional(&self.pool)
             .await
             .map_err(db)?
@@ -779,6 +892,11 @@ impl PgStore {
         permissions: crate::domain::team_activity::ActivityPermissions,
     ) -> Result<Value, Error> {
         query.validate()?;
+        let sonar = if query.role.as_str() == "code" {
+            self.sonar_inputs(source, None, Some(query.days.unwrap_or(7) as i32)).await
+        } else {
+            Some(json!([]))
+        };
         let snapshot = sqlx::query_scalar::<_, Value>(include_str!("team_activity.sql"))
             .bind(source)
             .bind(query.role.as_str())
@@ -787,6 +905,7 @@ impl PgStore {
             .bind(permissions.testcases)
             .bind(query.days.unwrap_or(7) as i32)
             .bind(json!(crate::domain::activity_review::ActivityReviewPolicy::default()))
+            .bind(sonar)
             .fetch_optional(&self.pool)
             .await
             .map_err(db)?
@@ -823,6 +942,21 @@ impl PgStore {
             },
         )?;
         activity["reviewPolicy"] = snapshot["reviewPolicy"].clone();
+        activity["sonarDaily"] = snapshot["sonarDaily"].clone();
+        if let (Some(members), Some(scanned)) =
+            (activity["members"].as_array_mut(), snapshot["sonarMembers"].as_array())
+        {
+            for member in scanned {
+                if !members.iter().any(|existing| existing["name"] == member["name"]) {
+                    members.push(json!({
+                        "name": member["name"], "displayName": member["name"],
+                        "group": member["group"], "attribution": member["attribution"],
+                        "inRoster": false, "eventCount": 0, "lastActivityAt": null,
+                        "status": "unverified"
+                    }));
+                }
+            }
+        }
         Ok(activity)
     }
 }

@@ -238,6 +238,8 @@ pub enum ControlKind {
     If,
     Once,
     Timer,
+    Plugin,
+    Script,
 }
 
 impl ControlKind {
@@ -247,6 +249,8 @@ impl ControlKind {
             ControlKind::If => "IF",
             ControlKind::Once => "ONCE",
             ControlKind::Timer => "TIMER",
+            ControlKind::Plugin => "PLUGIN",
+            ControlKind::Script => "SCRIPT",
         }
     }
 
@@ -256,6 +260,8 @@ impl ControlKind {
             "IF" => Some(ControlKind::If),
             "ONCE" => Some(ControlKind::Once),
             "TIMER" => Some(ControlKind::Timer),
+            "PLUGIN" => Some(ControlKind::Plugin),
+            "SCRIPT" => Some(ControlKind::Script),
             _ => None,
         }
     }
@@ -280,6 +286,34 @@ impl StepKind {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PluginStep {
+    pub profile_id: String,
+    pub query: String,
+    pub output: String,
+}
+
+impl PluginStep {
+    pub fn parse(payload: &serde_json::Value) -> Option<Self> {
+        let step: Self = serde_json::from_value(payload.clone()).ok()?;
+        let mut name = step.output.bytes();
+        if step.profile_id.is_empty()
+            || step.profile_id.len() > 128
+            || !step.profile_id.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_')
+            || step.query.trim().is_empty()
+            || step.query.len() > 16_384
+            || step.output.len() > 64
+            || step.output.starts_with("__")
+            || !name.next().is_some_and(|c| c.is_ascii_alphabetic() || c == b'_')
+            || !name.all(|c| c.is_ascii_alphanumeric() || c == b'_')
+        {
+            return None;
+        }
+        Some(step)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PlanStep {
     Case(String),
@@ -288,6 +322,8 @@ pub enum PlanStep {
     If { variable: String, operator: String, value: String, body: Vec<PlanStep> },
     Once { body: Vec<PlanStep> },
     Timer { ms: u64 },
+    Plugin(Option<PluginStep>),
+    Script(serde_json::Value),
 }
 
 /// Nesting depth cap; guards against pathologically deep payloads exhausting the stack.
@@ -347,6 +383,8 @@ fn parse_control_inner(
             body: body(),
         },
         ControlKind::Once => PlanStep::Once { body: body() },
+        ControlKind::Script => PlanStep::Script(payload.clone()),
+        ControlKind::Plugin => PlanStep::Plugin(PluginStep::parse(payload)),
         ControlKind::Timer => {
             PlanStep::Timer { ms: payload.get("ms").and_then(|m| m.as_u64()).unwrap_or(0) }
         }

@@ -1,19 +1,24 @@
 import { useState } from 'react'
-import { ExperimentOutlined } from '@ant-design/icons'
+import { ExperimentOutlined, LinkOutlined } from '@ant-design/icons'
 import { useI18n } from '../i18n'
 import RagSettings from './RagSettings'
+import ReportAddressSettings from './ReportAddressSettings'
 
 // System parameters: a grouped left nav (feature) + right config panel, mirroring the project admin
 // layout. Each feature renders its own settings on the right. RAG config lives here (moved out of a
 // standalone nav item); add future platform-wide parameter groups as new items.
 
-type ParamKey = 'rag'
+type ParamKey = 'rag' | 'reportAddress'
 
 export default function SystemParams() {
   const { t } = useI18n()
   const [nav, setNav] = useState<ParamKey>('rag')
 
   const groups: { title: string; items: { key: ParamKey; label: string; icon: React.ReactNode }[] }[] = [
+    {
+      title: t('reportAddress.group', '站点设置'),
+      items: [{ key: 'reportAddress', label: t('reportAddress.title', '报告访问地址'), icon: <LinkOutlined /> }],
+    },
     {
       title: t('sysparam.grpAi', '智能能力'),
       items: [{ key: 'rag', label: t('sys.rag', 'RAG 配置'), icon: <ExperimentOutlined /> }],
@@ -47,7 +52,7 @@ export default function SystemParams() {
       </div>
       {/* Right: selected feature's config */}
       <div style={{ flex: 1, minWidth: 0, overflow: 'auto', padding: 16, background: 'var(--bg)' }}>
-        {nav === 'rag' && <RagSettings embedded />}
+        {nav === 'rag' ? <RagSettings embedded /> : <ReportAddressSettings />}
       </div>
     </div>
   )

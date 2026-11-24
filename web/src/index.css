@@ -6,9 +6,11 @@
   --brand-soft: #EAF2EF; /* faint brand bg for selected/hover */
   --brand-mindmap-root: #356F66; /* deeper, less glaring blue for the mindmap root node */
   --accent: #83B7A9; /* secondary cyan-blue for charts/decoration */
-  --success: #00b42a;
-  --error: #f53f3f;
+  --success: #396d85;
+  --error: #a2574f;
   --warning: #ff7d00;
+  --success-soft: color-mix(in srgb, var(--success) 55%, var(--panel));
+  --error-soft: color-mix(in srgb, var(--error) 60%, var(--panel));
   --bg: transparent; /* app canvas: transparent so the body ambient glow shows through */
   --bg-base: #f7f8fa; /* body solid bg, neutral light gray */
   --panel: #ffffff; /* cards/panels */
@@ -34,8 +36,8 @@
   --brand-soft: #233630; /* dark blue bg for selected rows */
   --brand-mindmap-root: #6CAC9D; /* less bright against the dark canvas */
   --accent: #83B7A9;
-  --success: #27c346;
-  --error: #f76965;
+  --success: #8ebbd1;
+  --error: #e2a295;
   --warning: #ff9a2e;
   --bg: transparent;
   --bg-base: #161719; /* neutral dark gray canvas */
@@ -52,6 +54,45 @@
   --spotlight:
     radial-gradient(ellipse 72% 56% at 10% 100%, rgba(var(--brand-rgb), 0.10), transparent 66%),
     radial-gradient(ellipse 60% 50% at 90% 100%, rgba(var(--brand-rgb), 0.05), transparent 68%);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .ms-summary-motion > * {
+    --summary-delay: 0ms;
+    animation: ms-summary-enter 240ms cubic-bezier(.2, .65, .35, 1) backwards;
+    animation-delay: var(--summary-delay, 0ms);
+  }
+  .ms-summary-motion > :nth-child(2) { --summary-delay: 35ms; }
+  .ms-summary-motion > :nth-child(3) { --summary-delay: 70ms; }
+  .ms-summary-motion > :nth-child(n + 4) { --summary-delay: 105ms; }
+  .ms-summary-chart-bar {
+    transform-box: fill-box;
+    transform-origin: center bottom;
+    animation: ms-summary-bar-enter 330ms cubic-bezier(.2, .65, .35, 1);
+  }
+  .ms-summary-chart-bar-horizontal {
+    transform-origin: left center;
+    animation: ms-summary-horizontal-bar-enter 330ms cubic-bezier(.2, .65, .35, 1);
+  }
+  [dir='rtl'] .ms-summary-chart-bar-horizontal { transform-origin: right center; }
+  .ms-summary-chart-series { animation: ms-summary-series-enter 260ms ease-out; }
+}
+
+@keyframes ms-summary-enter {
+  from { opacity: .45; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes ms-summary-bar-enter {
+  from { transform: scaleY(.04); }
+  to { transform: scaleY(1); }
+}
+@keyframes ms-summary-horizontal-bar-enter {
+  from { transform: scaleX(.04); }
+  to { transform: scaleX(1); }
+}
+@keyframes ms-summary-series-enter {
+  from { opacity: .25; }
+  to { opacity: 1; }
 }
 
 /* Closed-loop landing hero: a soft glow sweeps left to right, echoing the "pipeline / loop" theme.
@@ -292,10 +333,6 @@ body::before {
   animation: ms-step-grow 0.7s ease-out forwards;
   will-change: transform;
 }
-.ms-step-fillbg.done {
-  width: 100%;
-  transition: background 0.2s ease;
-}
 @keyframes ms-step-grow {
   from { transform: scaleX(0); }
   to { transform: scaleX(1); }
@@ -504,4 +541,153 @@ body::before {
   --ant-btn-solid-bg-color-hover: var(--brand-solid-hover);
   --ant-btn-solid-bg-color-active: var(--brand-solid-active);
   font-weight: 500;
+}
+
+.ms-worktabs > .ant-tabs-body-holder {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.ms-worktabs > .ant-tabs-body-holder > .ant-tabs-body,
+.ms-worktabs > .ant-tabs-body-holder > .ant-tabs-body > .ant-tabs-content {
+  height: 100%;
+  min-height: 0;
+}
+
+.ms-scenario-scroll {
+  box-sizing: border-box;
+  height: 100%;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-anchor: none;
+  padding: 12px 16px 24px;
+}
+
+.ms-step-detail-toggle.ant-btn,
+.ms-step-expand-spacer {
+  flex: 0 0 22px;
+  width: 22px;
+  min-width: 22px;
+  height: 22px;
+}
+
+.ms-step-detail-toggle.ant-btn {
+  padding: 0;
+  color: var(--text-2);
+  font-size: 11px;
+}
+
+.ms-step-kind.ant-tag,
+.ms-step-method.ant-tag {
+  margin: 0;
+  color: var(--text-2);
+  border-color: var(--border-soft);
+  background: var(--panel-2);
+}
+
+.ms-step-method.ant-tag {
+  font-weight: 600;
+  background: transparent;
+}
+
+.ms-step-outcome.ant-tag {
+  margin: 0;
+  border-color: transparent;
+  color: var(--step-outcome-color);
+  background: color-mix(in srgb, var(--step-outcome-color) 10%, transparent);
+}
+
+.ms-step-outcome.is-success { --step-outcome-color: var(--success); }
+.ms-step-outcome.is-failure { --step-outcome-color: var(--error); }
+
+.ms-step-detail-label {
+  display: inline-block;
+  margin-inline-start: 8px;
+  color: var(--text-2);
+  font-size: 11px;
+}
+
+.ms-step-details {
+  margin: 2px 0 10px;
+  padding: 0 12px;
+  border-inline-start: 2px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  font-size: 12px;
+  cursor: default;
+  overflow-wrap: anywhere;
+}
+
+.ms-step-details section {
+  display: grid;
+  grid-template-columns: 70px minmax(0, 1fr);
+  gap: 10px;
+  padding-block: 9px;
+}
+
+.ms-step-details section + section {
+  border-top: 1px solid var(--border-soft);
+}
+
+.ms-step-details h4 {
+  margin: 0;
+  color: var(--text-2);
+  font-size: inherit;
+  font-weight: 600;
+}
+
+.ms-step-detail-request,
+.ms-step-detail-meta,
+.ms-step-detail-stages summary,
+.ms-step-detail-stages > div {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+}
+
+.ms-step-detail-stages {
+  display: grid;
+  gap: 5px;
+}
+
+.ms-step-detail-stages summary {
+  cursor: pointer;
+  color: var(--text-2);
+}
+
+.ms-step-detail-stages summary strong { color: var(--text); }
+.ms-step-detail-stages summary .anticon { font-size: 9px; transform: rotate(-90deg); }
+.ms-step-detail-stages details[open] summary .anticon { transform: none; }
+
+.ms-step-details pre {
+  max-height: 220px;
+  margin: 6px 0 0;
+  padding: 7px 10px;
+  border-radius: 4px;
+  background: var(--panel-2);
+  color: var(--text);
+  overflow: auto;
+  white-space: pre-wrap;
+}
+
+.ms-step-detail-meta,
+.ms-step-detail-empty { color: var(--text-2); }
+.ms-step-detail-meta:not(:last-child) { margin-bottom: 6px; }
+.ms-step-details .ant-badge-status-text { font-size: inherit; }
+
+.ms-step-detail-table { overflow-x: auto; }
+.ms-step-detail-table table { width: 100%; min-width: 360px; table-layout: fixed; border-collapse: collapse; }
+.ms-step-detail-table .ms-step-check-item { width: 18%; }
+.ms-step-detail-table .ms-step-check-result { width: 84px; white-space: nowrap; }
+.ms-step-detail-table td:not(.ms-step-check-result) { overflow-wrap: anywhere; }
+.ms-step-detail-table .ms-step-check-result .ant-badge { display: inline-flex; align-items: center; white-space: nowrap; }
+.ms-step-detail-table th,
+.ms-step-detail-table td { padding: 4px 8px; text-align: start; vertical-align: top; }
+.ms-step-detail-table th { background: var(--panel-2); color: var(--text-2); font-weight: 500; }
+.ms-step-detail-table tbody tr + tr { border-top: 1px solid var(--border-soft); }
+
+@media (max-width: 600px) {
+  .ms-step-details section { grid-template-columns: minmax(0, 1fr); gap: 4px; }
 }

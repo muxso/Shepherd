@@ -56,7 +56,7 @@ function Trend({ commits, metric, canRequirements, openRequirement }: { commits:
             {(index % stride === 0 || index === points.length - 1) && <text x={x(p.at)} y={283} textAnchor="middle" fontSize={12} fill="var(--text-3)"><tspan x={x(p.at)}>{p.key.slice(5)}</tspan><tspan x={x(p.at)} dy={17}>{dateTime(p.at).slice(11, 16)}</tspan></text>}
           </g>
         })}
-        <text x={514} y={331} textAnchor="middle" fontSize={12} fill="var(--text-3)">每日最后提交时间（Git 作者时间 · 上海时区）</text>
+        <text x={514} y={331} textAnchor="middle" fontSize={12} fill="var(--text-3)">每日最后提交时间（Git 作者时间 · 上海时间）</text>
       </svg>
     </div>
     {metric === 'lines' && points.some(p => p.value == null) && <div className="yx-muted">空心点表示当天存在未采集的行数，该日期不绘制代码量数值；可悬停查看已知数据。</div>}

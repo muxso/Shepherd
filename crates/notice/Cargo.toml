@@ -23,13 +23,14 @@ reqwest = { workspace = true, features = ["json", "rustls-tls"], optional = true
 hmac = { version = "0.12", optional = true }
 sha2 = { version = "0.10", optional = true }
 base64 = { version = "0.22", optional = true }
-percent-encoding = { version = "2", optional = true }
+percent-encoding = "2"
+url = { version = "2", optional = true }
 
 [features]
-pg = ["dep:sqlx", "dep:serde_json"]
+pg = ["dep:sqlx", "dep:serde_json", "dep:url"]
 http = ["dep:axum", "dep:serde", "dep:webauth", "webauth/http", "dep:utoipa"]
 # Webhook robot sender (Feishu / DingTalk / WeCom).
-robot = ["dep:reqwest", "dep:serde_json", "dep:hmac", "dep:sha2", "dep:base64", "dep:percent-encoding"]
+robot = ["dep:reqwest", "dep:serde_json", "dep:hmac", "dep:sha2", "dep:base64"]
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }

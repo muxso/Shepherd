@@ -1,3 +1,5 @@
+import { useApp } from '../context'
+import { allows } from '../components/FeatureAccess'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   Button,
@@ -48,6 +50,8 @@ function fmtTime(ms: number): string {
 
 export default function TaskCenter() {
   const { t } = useI18n()
+  const { permissions } = useApp()
+  const canManage = allows(permissions, 'TASK_CENTER', 'UPDATE')
   const [tab, setTab] = useState<'realtime' | 'background'>('realtime')
   const [rows, setRows] = useState<TaskCenterItem[]>([])
   const [total, setTotal] = useState(0)
@@ -201,7 +205,7 @@ export default function TaskCenter() {
           <Button type="link" size="small" onClick={() => setDetail(it)}>
             {t('tc.detail', '执行详情')}
           </Button>
-          {!TERMINAL.has(it.status) ? (
+          {canManage && (!TERMINAL.has(it.status) ? (
             <Button type="link" size="small" danger onClick={() => stop(it)}>
               {t('tc.stop', '停止')}
             </Button>
@@ -209,7 +213,7 @@ export default function TaskCenter() {
             <Button type="link" size="small" danger onClick={() => remove(it)}>
               {t('a.delete', '删除')}
             </Button>
-          )}
+          ))}
         </Space>
       ),
     },

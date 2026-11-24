@@ -42,6 +42,10 @@ impl Condition {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PlanNode {
     Leaf(Leaf),
+    Plugin {
+        label: String,
+        processor: Option<Processor>,
+    },
     Loop {
         times: u32,
         body: Vec<PlanNode>,
@@ -63,6 +67,7 @@ pub enum PlanNode {
 struct RunState {
     vars: BTreeMap<String, String>,
     stopped: bool,
+    plugin_executed: bool,
     once_done: HashSet<u32>,
 }
 
@@ -73,17 +78,75 @@ pub trait StepObserver: Send + Sync {
     fn step_finished(&self, report_id: &str, step_id: &str, outcome: &str, latency_ms: Option<u64>);
 }
 
+#[async_trait::async_trait]
+pub trait StepPreparation: Send + Sync {
+    async fn prepare(
+        &self,
+        variables: BTreeMap<String, String>,
+        processors: &[Processor],
+    ) -> Result<BTreeMap<String, String>, String>;
+    async fn plugin_step(
+        &self,
+        _variables: BTreeMap<String, String>,
+        _processor: &Processor,
+    ) -> Result<BTreeMap<String, String>, String> {
+        Err("plugin steps are unavailable in this executor".into())
+    }
+}
+
 #[derive(Clone)]
 pub struct PlanExecutor {
     specs: Arc<dyn CaseSpecSource>,
     sink: Arc<dyn CaseResultSink>,
     runner: ReqwestRunner,
     observer: Option<Arc<dyn StepObserver>>,
+    preparation: Option<Arc<dyn StepPreparation>>,
 }
 
 impl PlanExecutor {
     pub fn new(specs: Arc<dyn CaseSpecSource>, sink: Arc<dyn CaseResultSink>) -> Self {
-        Self { specs, sink, runner: ReqwestRunner::no_proxy(), observer: None }
+        Self { specs, sink, runner: ReqwestRunner::no_proxy(), observer: None, preparation: None }
+    }
+
+    pub fn with_preparation(mut self, preparation: Arc<dyn StepPreparation>) -> Self {
+        self.preparation = Some(preparation);
+        self
+    }
+
+    async fn prepare_step(
+        &self,
+        mut request: RequestSpec,
+        env: &ResolvedEnv,
+        variables: &BTreeMap<String, String>,
+        processors: &[Processor],
+        mut assertions: Vec<Assertion>,
+    ) -> Result<(RequestSpec, Vec<Assertion>, Option<BTreeMap<String, String>>), String> {
+        use api_runner::domain::preparation::{prepare_request, render_assertions};
+
+        if processors
+            .iter()
+            .any(|processor| matches!(processor, Processor::UnsupportedPostProcessing))
+        {
+            return Err("plugin, SQL and script processors belong in step preparation".into());
+        }
+        let preparer = self.preparation.as_ref().ok_or_else(|| {
+            "scenario plugin preparation requires an authenticated server run and environment"
+                .to_owned()
+        })?;
+        let preparation: Vec<_> = processors
+            .iter()
+            .filter(|processor| !matches!(processor, Processor::Extract { .. }))
+            .cloned()
+            .collect();
+        let variables = preparer.prepare(variables.clone(), &preparation).await?;
+        let mut headers = env.clone();
+        headers.base_url.clear();
+        apply_env_static(&mut request, &headers);
+        let request = prepare_request(request, Some(&env.base_url), &[], &variables, 1_048_576)
+            .map_err(|error| error.to_string())?;
+        render_assertions(&mut assertions, &variables, 1_048_576)
+            .map_err(|error| error.to_string())?;
+        Ok((request, assertions, Some(variables)))
     }
 
     pub fn with_runner(mut self, runner: ReqwestRunner) -> Self {
@@ -103,8 +166,12 @@ impl PlanExecutor {
         env: &ResolvedEnv,
         stop_on_failure: bool,
     ) -> Result<bool, PortError> {
-        let mut state =
-            RunState { vars: env.variables.clone(), stopped: false, once_done: HashSet::new() };
+        let mut state = RunState {
+            vars: env.variables.clone(),
+            stopped: false,
+            plugin_executed: false,
+            once_done: HashSet::new(),
+        };
         // Built-in per-run variables: `${__runid}` (8-hex, unique per execution)
         // and `${__timestamp}` (epoch ms) let steps mint collision-free names,
         // making chains that create persistent resources safely re-runnable.
@@ -185,11 +252,91 @@ impl PlanExecutor {
                         Ok(true)
                     }
                 }
+                PlanNode::Plugin { label, processor } => {
+                    self.exec_plugin(report_id, state, label, processor.as_ref(), stop_on_failure)
+                        .await
+                }
                 PlanNode::Leaf(leaf) => {
                     self.exec_leaf(report_id, env, state, leaf, stop_on_failure).await
                 }
             }
         })
+    }
+
+    async fn exec_plugin(
+        &self,
+        report_id: &str,
+        state: &mut RunState,
+        label: &str,
+        processor: Option<&Processor>,
+        stop_on_failure: bool,
+    ) -> Result<bool, PortError> {
+        if let Some(observer) = &self.observer {
+            observer.step_started(report_id, label);
+        }
+        let started = std::time::Instant::now();
+        state.plugin_executed = true;
+        let result = match (processor, &self.preparation) {
+            (
+                Some(
+                    processor @ (Processor::Sql { name, .. }
+                    | Processor::SandboxScript { output: name, .. }),
+                ),
+                Some(preparer),
+            ) => {
+                let result = preparer.plugin_step(state.vars.clone(), processor).await;
+                state.vars.remove(name);
+                result.and_then(|mut variables| {
+                    variables.remove(name).map(|value| (name.clone(), value)).ok_or_else(|| {
+                        "plugin did not return the configured output variable".into()
+                    })
+                })
+            }
+            (
+                Some(Processor::Sql { name, .. } | Processor::SandboxScript { output: name, .. }),
+                None,
+            ) => {
+                state.vars.remove(name);
+                Err("plugin step requires an authenticated server run and environment".into())
+            }
+            _ => Err("invalid plugin step configuration".into()),
+        };
+        let elapsed = started.elapsed().as_millis() as u64;
+        let (outcome, failures) = match result {
+            Ok((name, value)) => {
+                state.vars.insert(name, value);
+                ("SUCCESS", Vec::new())
+            }
+            Err(error) => ("ERROR", vec![error]),
+        };
+        self.sink.record(report_id, label, outcome, &failures).await?;
+        let empty = serde_json::json!([]);
+        self.sink
+            .record_detail(
+                report_id,
+                label,
+                0,
+                elapsed as i64,
+                0,
+                "",
+                &[],
+                &empty,
+                &empty,
+                label.split_once(' ').map_or("PLUGIN", |(kind, _)| kind),
+                label.split_once(' ').map_or(label, |(_, name)| name),
+                &[],
+                None,
+                &serde_json::Value::Null,
+            )
+            .await?;
+        if let Some(observer) = &self.observer {
+            observer.step_finished(report_id, label, outcome, Some(elapsed));
+        }
+        let passed = outcome == "SUCCESS";
+        if !passed && stop_on_failure {
+            state.stopped = true;
+        }
+        Ok(passed)
     }
 
     async fn exec_leaf(
@@ -207,7 +354,7 @@ impl PlanExecutor {
         if let Some(obs) = &self.observer {
             obs.step_started(report_id, &step_id);
         }
-        let (case_id, mut req, assertions, processors) = match leaf {
+        let (case_id, mut req, mut assertions, processors) = match leaf {
             Leaf::Case { case_id } => match self.specs.spec_of(case_id).await? {
                 Some(spec) => (case_id.clone(), spec.request, spec.assertions, spec.processors),
                 None => {
@@ -233,25 +380,44 @@ impl PlanExecutor {
             }
         };
 
-        if api_runner::domain::preparation::needs_plugin_preparation(&processors) {
-            self.sink.record(report_id,&case_id,"ERROR",&["this runner does not support plugin preparation; use server-side HTTP debugging".into()]).await?;
-            if let Some(obs) = &self.observer {
-                obs.step_finished(report_id, &step_id, "ERROR", None);
+        let prepared = if api_runner::domain::preparation::needs_plugin_preparation(&processors) {
+            self.prepare_step(req, env, &state.vars, &processors, assertions).await
+        } else {
+            apply_env_static(&mut req, env);
+            let wait = wait_millis(&processors);
+            if wait > 0 {
+                tokio::time::sleep(Duration::from_millis(wait)).await;
             }
-            if stop_on_failure {
-                state.stopped = true;
+            if state.plugin_executed {
+                use api_runner::domain::preparation::{prepare_request, render_assertions};
+                prepare_request(req, None, &[], &state.vars, 1_048_576)
+                    .and_then(|request| {
+                        render_assertions(&mut assertions, &state.vars, 1_048_576)?;
+                        Ok((request, assertions, None))
+                    })
+                    .map_err(|error| error.to_string())
+            } else {
+                substitute_request(&mut req, &state.vars);
+                Ok((req, assertions, None))
             }
-            return Ok(false);
-        }
-        apply_env_static(&mut req, env);
-        substitute_request(&mut req, &state.vars);
-        let wait = wait_millis(&processors);
-        if wait > 0 {
-            tokio::time::sleep(Duration::from_millis(wait)).await;
-        }
+        };
+        let (req, assertions, prepared_vars) = match prepared {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                self.sink.record(report_id, &case_id, "ERROR", &[error]).await?;
+                if let Some(obs) = &self.observer {
+                    obs.step_finished(report_id, &step_id, "ERROR", None);
+                }
+                if stop_on_failure {
+                    state.stopped = true;
+                }
+                return Ok(false);
+            }
+        };
+        let variables = prepared_vars.as_ref().unwrap_or(&state.vars);
         // Must pass state.vars: otherwise the outcome evaluates Variable assertions with empty vars, misreporting and contradicting `detailed` below.
         let (report, snap) =
-            self.runner.run_case_with_snapshot_vars(&req, &assertions, &state.vars).await;
+            self.runner.run_case_with_snapshot_vars(&req, &assertions, variables).await;
         let (outcome, failures): (&str, Vec<String>) = match report.outcome {
             CaseOutcome::Success => ("SUCCESS", Vec::new()),
             CaseOutcome::Error => ("ERROR", report.failures),
@@ -262,7 +428,7 @@ impl PlanExecutor {
         }
         // Best-effort: writeback failure never affects execution. Extraction is computed once, then both persisted and written to the context.
         if let Some(s) = &snap {
-            let detailed = evaluate_detailed_with_vars(&assertions, s, &state.vars);
+            let detailed = evaluate_detailed_with_vars(&assertions, s, variables);
             let assertions_json = serde_json::Value::Array(
                 detailed
                     .iter()
@@ -413,6 +579,107 @@ mod tests {
         assert_eq!(sink.rows.lock().expect("rows")[0].1, "ERROR");
         server.abort();
     }
+    struct SqlPreparationFixture;
+
+    #[async_trait]
+    impl StepPreparation for SqlPreparationFixture {
+        async fn prepare(
+            &self,
+            mut variables: BTreeMap<String, String>,
+            processors: &[Processor],
+        ) -> Result<BTreeMap<String, String>, String> {
+            let [Processor::Sql { name, .. }] = processors else {
+                return Err("expected one SQL processor".into());
+            };
+            variables.insert(name.clone(), r#"{"rows":[[42,"20261121"]]}"#.into());
+            Ok(variables)
+        }
+        async fn plugin_step(
+            &self,
+            variables: BTreeMap<String, String>,
+            processor: &Processor,
+        ) -> Result<BTreeMap<String, String>, String> {
+            self.prepare(variables, std::slice::from_ref(processor)).await
+        }
+    }
+
+    #[tokio::test]
+    async fn sql_preparation_supplies_request_and_response_assertion_values() {
+        use axum::extract::Path;
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("listen");
+        let address = listener.local_addr().expect("address");
+        let app = Router::new().route(
+            "/snapshot/{id}",
+            get(|Path(id): Path<String>| async move {
+                Json(serde_json::json!({"id": id, "count": 42}))
+            }),
+        );
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.expect("serve") });
+        let sink = SpySink::default();
+        let spec = get_case(
+            "/snapshot/{{baseline#/rows/0/1}}".into(),
+            vec![
+                Assertion::JsonFieldEquals {
+                    pointer: "/count".into(),
+                    expected: "${baseline#/rows/0/0}".into(),
+                },
+                Assertion::JsonFieldEquals { pointer: "/id".into(), expected: "20261121".into() },
+            ],
+            vec![Processor::Sql {
+                name: "baseline".into(),
+                datasource: "postgres".into(),
+                sql: "SELECT 42".into(),
+            }],
+        );
+        let executor = exec(InMemorySpecs::default().with("case", spec), sink.clone())
+            .with_preparation(Arc::new(SqlPreparationFixture));
+        let plan = [PlanNode::Leaf(Leaf::Case { case_id: "case".into() })];
+        let env = ResolvedEnv { base_url: format!("http://{address}"), ..Default::default() };
+        assert!(executor.run("report", &plan, &env, true).await.expect("run"));
+        assert_eq!(sink.rows.lock().expect("rows")[0].1, "SUCCESS");
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn plugin_output_is_available_to_the_next_request() {
+        let base = spawn().await;
+        let sink = SpySink::default();
+        let specs = InMemorySpecs::default().with(
+            "next",
+            get_case(
+                format!("{base}/echo?id={{{{baseline#/rows/0/0}}}}"),
+                vec![Assertion::BodyContains("{{baseline#/rows/0/0}}".into())],
+                vec![],
+            ),
+        );
+        let plan = [
+            PlanNode::Plugin {
+                label: "PLUGIN baseline".into(),
+                processor: Some(Processor::Sql {
+                    name: "baseline".into(),
+                    datasource: "postgres".into(),
+                    sql: "SELECT 42".into(),
+                }),
+            },
+            PlanNode::Leaf(Leaf::Case { case_id: "next".into() }),
+        ];
+        let executor = exec(specs, sink.clone()).with_preparation(Arc::new(SqlPreparationFixture));
+        assert!(executor.run("report", &plan, &ResolvedEnv::default(), true).await.expect("run"));
+        assert_eq!(
+            *sink.rows.lock().expect("rows"),
+            vec![("PLUGIN baseline".into(), "SUCCESS".into()), ("next".into(), "SUCCESS".into()),]
+        );
+        let missing = SpySink::default();
+        assert!(!exec(InMemorySpecs::default(), missing.clone())
+            .run("report", &plan, &ResolvedEnv::default(), true)
+            .await
+            .expect("run"));
+        assert_eq!(
+            *missing.rows.lock().expect("rows"),
+            vec![("PLUGIN baseline".into(), "ERROR".into())]
+        );
+    }
+
     fn get_case(
         url: String,
         assertions: Vec<Assertion>,

@@ -5,6 +5,7 @@ import { isProjectScoped, stripScope } from './scope'
 
 interface AppState {
   token: string
+  permissions: string[] | null
   login: (token: string) => void
   logout: () => void
   projects: Project[]
@@ -21,6 +22,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const loc = useLocation()
   const navigate = useNavigate()
   const [token, setToken] = useState(tokenStore.get())
+  const [access, setAccess] = useState<{ token: string; permissions: string[] }>()
+  const permissions = access?.token === token ? access.permissions : null
+  useEffect(() => {
+    if (!token) { setAccess(undefined); return }
+    let current = true
+    api.me().then(me => { if (current) setAccess({ token, permissions: me.permissions }) })
+      .catch(() => { if (current) setAccess({ token, permissions: [] }) })
+    return () => { current = false }
+  }, [token])
   const [projects, setProjects] = useState<Project[]>([])
   const [projectsLoaded, setProjectsLoaded] = useState(false)
   // Remembered default project: fallback for global pages / bare URLs. The URL wins when present.
@@ -89,8 +99,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const value = useMemo<AppState>(
-    () => ({ token, login, logout, projects, projectsLoaded, projectId, setProjectId, reloadProjects }),
-    [token, login, logout, projects, projectsLoaded, projectId, setProjectId, reloadProjects],
+    () => ({ token, permissions, login, logout, projects, projectsLoaded, projectId, setProjectId, reloadProjects }),
+    [token, permissions, login, logout, projects, projectsLoaded, projectId, setProjectId, reloadProjects],
   )
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>
 }

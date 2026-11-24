@@ -1,36 +1,98 @@
+import { useI18n } from '../../i18n'
 import type { MemberMetric } from './api'
-const percent = (value:number | null) => value == null ? '待评价' : `${value.toFixed(1)}%`
-const points = [[0,-85],[-73.6,42.5],[73.6,42.5]]
-const labels = ['交付量达成','交付需求质量','交付时效']
-export function MemberRadar({ member }: { member: MemberMetric }) {
-  const complete = member.radar.every(value => value != null)
-  const polygon = points.map(([x,y],i) => `${x*(member.radar[i] ?? 0)/100},${y*(member.radar[i] ?? 0)/100}`).join(' ')
-  return <svg viewBox="-140 -135 280 240" role="img" aria-label={`${member.name}个人雷达图`} className="yx-member-radar">
-    <title>{member.name}：交付 {member.deliveredRequirements} 项，含Bug交付需求占比 {percent(member.bugRate)}，延期率 {percent(member.delayRate)}</title>
-    <desc>统一0至100，越向外越好。质量与时效分别为100减去对应比率。缺失维度不补零或满分。</desc>
-    {[20,40,60,80,100].map(level => <g key={level} className="yx-radar-grid"><polygon points={points.map(([x,y]) => `${x*level/100},${y*level/100}`).join(' ')} /><text x={4} y={-85*level/100-2}>{level}</text></g>)}
-    {points.map(([x,y],i) => <line className="yx-radar-axis" key={i} x1={0} y1={0} x2={x} y2={y} />)}
-    {complete && <polygon className="yx-radar-value" points={polygon} />}
-    {points.map(([x,y],i) => <g key={i}>
-      {member.radar[i] != null && <circle className="yx-radar-point" cx={x*member.radar[i]!/100} cy={y*member.radar[i]!/100} r={2.7} />}
-      <text className="yx-radar-label" x={x*1.3} y={y*1.3} textAnchor="middle"><tspan x={x*1.3}>{labels[i]}</tspan><tspan x={x*1.3} dy={15}>{member.radar[i] == null ? '待评价' : member.radar[i]!.toFixed(1)}</tspan></text>
-    </g>)}
-  </svg>
+
+const axes = ['deliveryTargetAttainment', 'defectFreeDeliveryRate', 'onTimeDeliveryRate', 'sonarNewCodeCoverage']
+const radius = 72
+const directions = [[0, -1], [-1, 0], [0, 1], [1, 0]]
+const labels = [[0, -104], [-128, -9], [0, 92], [128, -9]]
+const levels = [20, 40, 60, 80, 100]
+const chartViewBox = '-196 -117 392 232'
+
+function plotPoint(value: number, index: number) {
+  const [dx, dy] = directions[index]
+  const distance = radius * Math.max(0, Math.min(100, value)) / 100
+  return { x: dx * distance, y: dy * distance, tx: dy * distance * .42, ty: -dx * distance * .42 }
 }
-export const radarColors = ['var(--brand)','#D97706','#0F8A6B','#9254DE','#C83E75','#137C9B']
-export function GroupRadar({ group,members }: { group:string; members:MemberMetric[] }) {
-  return <svg viewBox="-140 -135 280 240" role="img" aria-label={`${group}组内成员雷达对比图`} className="yx-group-radar">
-    <title>{group}：{members.map(p => p.name).join('、')}的交付量、关联质量与交付时效</title>
-    <desc>所有成员共用0至100刻度，颜色与右侧成员对应；缺失数据仅绘制已知点。</desc>
-    {[20,40,60,80,100].map(level => <g key={level} className="yx-radar-grid"><polygon points={points.map(([x,y]) => `${x*level/100},${y*level/100}`).join(' ')} /><text x={4} y={-85*level/100-2}>{level}</text></g>)}
-    {points.map(([x,y],i) => <g key={i}><line className="yx-radar-axis" x1={0} y1={0} x2={x} y2={y} /><text className="yx-radar-label" x={x*1.3} y={y*1.3} textAnchor="middle">{labels[i]}</text></g>)}
-    {members.map((member,index) => {
-      const color=radarColors[index]
-      const polygon=points.map(([x,y],i) => `${x*(member.radar[i] ?? 0)/100},${y*(member.radar[i] ?? 0)/100}`).join(' ')
-      return <g key={member.name} data-member={member.name}><title>{member.name}：交付 {member.deliveredRequirements} 项，含Bug交付需求占比 {percent(member.bugRate)}，延期率 {percent(member.delayRate)}</title>
-        {member.radar.every(value => value != null) && <polygon className="yx-radar-value" points={polygon} style={{ stroke:color,fill:color,fillOpacity:.04,strokeDasharray:index%2 ? '4 2' : undefined }} />}
-        {points.map(([x,y],i) => member.radar[i] == null ? null : <circle key={i} cx={x*member.radar[i]!/100} cy={y*member.radar[i]!/100} r={2.7} style={{ fill:color }} />)}
+
+type Point = ReturnType<typeof plotPoint>
+const curve = (a: Point, b: Point) => `C ${a.x + a.tx},${a.y + a.ty} ${b.x - b.tx},${b.y - b.ty} ${b.x},${b.y}`
+
+export function onTimeRate(member: MemberMetric) {
+  if (member.onTimeRate !== undefined) return member.onTimeRate
+  const due = member.onTime + member.deliveredLate + member.overdueAtEnd
+  return due > 0 ? 100 * member.onTime / due : null
+}
+
+export function radarValues(member: MemberMetric) {
+  const latest = member.sonar?.recent[0]
+  return [member.radar[0], member.radar[1], onTimeRate(member), latest?.analysisQuality?.coverage ?? latest?.newCoverage ?? null]
+}
+
+function useRadarLabels() {
+  const { lang, t } = useI18n()
+  const numbers = new Intl.NumberFormat(lang, { minimumFractionDigits: 1, maximumFractionDigits: 1 })
+  return {
+    axisLabel: (index: number) => t('engineering.' + axes[index]),
+    format: (value: number | null, index: number) => value == null
+      ? t(index === 3 ? 'engineering.noData' : 'engineering.notRated')
+      : numbers.format(value),
+  }
+}
+const radarColors = ['#4786d4', '#299a9c', '#cf8958', '#8c69c1', '#bf6588', '#557db7']
+export const radarColor = (index: number) => radarColors[index] ?? `hsl(${(index * 137.508) % 360} 55% 48%)`
+
+function RadarGrid({ values }: { values?: ReturnType<typeof radarValues> }) {
+  const { axisLabel, format } = useRadarLabels()
+  return <>
+    {levels.map(level => <g key={level} className="yx-radar-grid">
+      <circle r={radius * level / 100} className={level === 100 ? 'yx-radar-outline' : undefined} />
+      <text x={4} y={-radius * level / 100 + 9}>{level}</text>
+    </g>)}
+    {directions.map(([dx, dy], index) => {
+      const x = dx * radius
+      const y = dy * radius
+      const [labelX, labelY] = labels[index]
+      return <g key={axes[index]}>
+        <line className="yx-radar-axis" x1={0} y1={0} x2={x} y2={y} />
+        <text className="yx-radar-label" x={labelX} y={labelY} textAnchor="middle">
+          {axisLabel(index)}
+          {values && <tspan x={labelX} dy={15}>{format(values[index], index)}</tspan>}
+        </text>
       </g>
     })}
+  </>
+}
+
+function RadarSeries({ member, index }: { member: MemberMetric; index?: number }) {
+  const { axisLabel, format } = useRadarLabels()
+  const values = radarValues(member)
+  const color = index === undefined ? undefined : radarColor(index)
+  const coords = values.map((value, i) => value == null ? null : plotPoint(value, i))
+  const complete = coords.every((point): point is Point => point !== null)
+  const segments = coords.map((point, i) => {
+    const next = coords[(i + 1) % coords.length]
+    if (!point || !next) return ''
+    return `${complete && i > 0 ? '' : `M ${point.x},${point.y} `}${curve(point, next)}`
+  }).join(' ')
+  return <g data-member={member.name} style={{ color }}>
+    <title>{member.name}: {axes.map((_, i) => `${axisLabel(i)} ${format(values[i], i)}`).join(', ')}</title>
+    <path className="yx-radar-value" d={complete ? `${segments} Z` : segments} style={complete ? undefined : { fill: 'none' }} />
+    {coords.map((point, i) => point && <circle key={axes[i]} className="yx-radar-point" cx={point.x} cy={point.y} r={2.7} />)}
+  </g>
+}
+
+export function MemberRadar({ member }: { member: MemberMetric }) {
+  const { t } = useI18n()
+  return <svg viewBox={chartViewBox} role="img" aria-label={t("engineering.individualRadarForV0", undefined, { v0: member.name })} className="yx-member-radar">
+    <RadarGrid values={radarValues(member)} />
+    <RadarSeries member={member} />
+  </svg>
+}
+export function GroupRadar({ group, members }: { group: string; members: MemberMetric[] }) {
+  const { t } = useI18n()
+  return <svg viewBox={chartViewBox} role="img" aria-label={t("engineering.teamRadarComparisonForV0", undefined, { v0: group })} className="yx-group-radar">
+    <desc>{t("engineering.allMembersShareA0100ScaleMissingValuesAreLeftBlank")}</desc>
+    <RadarGrid />
+    {members.map((member, index) => <RadarSeries member={member} index={index} key={member.name} />)}
   </svg>
 }

@@ -6,7 +6,7 @@
 .yx-output-kpi.selected { border-bottom-color: var(--brand); background: var(--brand-soft); }
 .yx-output-kpi > span:first-child { color: var(--text-2); font-size: 13px; }
 .yx-output-kpi strong { font-size: 24px; font-variant-numeric: tabular-nums; font-weight: 600; }
-.yx-comparison, .yx-muted, .yx-output-status, .yx-page-status { color: var(--text-3); font-size: 12px; }
+.yx-comparison, .yx-muted, .yx-output-status { color: var(--text-3); font-size: 12px; }
 .yx-output-charts { display: grid; grid-template-columns: minmax(0, 2fr) minmax(240px, 1fr); gap: 16px; margin-bottom: 16px; }
 .yx-block-chart { display: flex; gap: 3px; height: 160px; overflow-x: auto; padding-block: 8px; }
 .yx-block-column { display: grid; grid-template-rows: repeat(12, 1fr); gap: 3px; flex: 1; min-width: 5px; outline-offset: 2px; }
@@ -23,7 +23,6 @@
 .yx-segments { display: flex; gap: 3px; height: 20px; margin-top: 12px; }
 .yx-segments i { flex: 1; border-radius: 2px; background: var(--border-soft); }
 .yx-output-status { margin-top: 8px; }
-.yx-page-status { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
 .yx-statistics-notes { max-width: min(360px, 80vw); font-size: 12px; line-height: 1.6; }
 .yx-statistics-notes p { margin: 0 0 8px; }
 .yx-statistics-notes p:last-child { margin-bottom: 0; }

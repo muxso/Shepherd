@@ -60,6 +60,39 @@ impl ExecutionResolver {
         }
         Ok(api_runner::PreparedVariables { variables, steps: Vec::new() })
     }
+    pub async fn prepare_request_project(
+        &self,
+        user: AuthUser,
+        _project: &str,
+        environment: Option<&str>,
+        variables: std::collections::BTreeMap<String, String>,
+        processors: &[api_runner::Processor],
+    ) -> Result<api_runner::PreparedVariables, axum::response::Response> {
+        self.prepare(user, environment, variables, processors).await
+    }
+
+    pub async fn prepare_scenario(
+        &self,
+        user: AuthUser,
+        _project: &str,
+        environment: &str,
+        variables: std::collections::BTreeMap<String, String>,
+        processors: &[api_runner::Processor],
+    ) -> Result<api_runner::PreparedVariables, axum::response::Response> {
+        self.prepare(user, Some(environment), variables, processors).await
+    }
+
+    pub async fn prepare_scenario_step(
+        &self,
+        user: AuthUser,
+        project: &str,
+        environment: &str,
+        variables: std::collections::BTreeMap<String, String>,
+        processors: &[api_runner::Processor],
+    ) -> Result<api_runner::PreparedVariables, axum::response::Response> {
+        self.prepare_scenario(user, project, environment, variables, processors).await
+    }
+
     pub async fn host_overrides(
         &self,
         _user: AuthUser,

@@ -1,0 +1,6 @@
+{
+  "id": "sonar",
+  "name": "SonarQube",
+  "description": "独立接收 SonarQube 代码质量分析，为热力图提供门禁与新增代码指标。",
+  "entry": "/code-quality"
+}

@@ -93,7 +93,7 @@ impl NoticeRuleAdmin {
 
 /// Local wall-clock time for the `${time}` placeholder.
 pub(crate) fn now_text() -> String {
-    chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string()
+    chrono::Local::now().format("%Y-%m-%d %H:%M:%S %:z").to_string()
 }
 
 #[cfg(test)]

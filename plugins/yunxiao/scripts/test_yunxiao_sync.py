@@ -5,6 +5,13 @@ class SyncTests(unittest.TestCase):
   records=[{'data':'汉'*100,'externalId':str(i)} for i in range(250)]
   batches=list(sync.batches(records,2000));self.assertEqual(sum(map(len,batches)),250)
   self.assertTrue(all(len(b)<=100 for b in batches))
+ def test_batch_removes_only_an_oversized_duplicate_description(self):
+  description='图'*100
+  record={'kind':'requirement','externalId':'1','data':{'description':description,'raw':{'description':description,'status':'testing'}}}
+  sent=list(sync.batches([record],500))[0][0]
+  self.assertEqual(sent['data']['description'],description)
+  self.assertEqual(sent['data']['raw'],{'status':'testing'})
+  self.assertEqual(record['data']['raw']['description'],description)
  def test_duplicates_use_latest_source_update_and_preserve_kind(self):
   a={'kind':'bug','externalId':'1','data':{'title':'old','updatedAt':'2026-10-27T00:00:00+08:00'}}
   b={'kind':'bug','externalId':'1','data':{'title':'new','updatedAt':'2026-10-28T00:00:00+08:00'}}

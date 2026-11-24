@@ -129,9 +129,21 @@ pub struct MemberMetric {
     pub overdue_at_end: usize,
     pub unknown_delivery: usize,
     pub delay_rate: Option<f64>,
+    pub on_time_rate: Option<f64>,
+    pub sonar: Option<SonarPushMetrics>,
     pub radar: [Option<f64>; 3],
     pub requirements: Vec<RequirementMetric>,
 }
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SonarPushMetrics {
+    pub pushes: usize,
+    pub evaluated: usize,
+    pub passed: usize,
+    pub pass_rate: Option<f64>,
+    pub recent: Vec<Value>,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MemberMetrics {
@@ -271,7 +283,11 @@ fn build_period(
     let mut group_candidates: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     for record in records {
         let data = &record.data;
-        let key = if record.kind == "commit" { "author" } else { "owner" };
+        let key = match record.kind.as_str() {
+            "commit" => "author",
+            "sonar_push" => "member",
+            _ => "owner",
+        };
         if let Some(name) = human(text(data, key)) {
             let group = text(data, "group");
             if !group.is_empty() && group != "待归属" {
@@ -408,6 +424,26 @@ fn build_period(
     for name in quality.by_person.keys() {
         people.entry(name.clone()).or_default();
     }
+    type PushKey = (String, String, String, String);
+    let mut pushes_by_person: BTreeMap<String, BTreeMap<PushKey, &Record>> = BTreeMap::new();
+    for record in records.iter().filter(|record| record.kind == "sonar_push") {
+        let Some(push) = record.data.get("push") else { continue };
+        if !inside(timestamp(push, "pushedAt")) {
+            continue;
+        }
+        let Some(name) = human(text(&record.data, "member")) else { continue };
+        people.entry(name.clone()).or_default();
+        let key = (
+            text(&record.data, "repositoryId").to_owned(),
+            text(push, "branch").to_owned(),
+            text(push, "baseRevision").to_owned(),
+            text(&record.data, "revision").to_owned(),
+        );
+        let latest = pushes_by_person.entry(name).or_default().entry(key).or_insert(record);
+        if timestamp(&record.data, "analyzedAt") > timestamp(&latest.data, "analyzedAt") {
+            *latest = record;
+        }
+    }
     let members = people
         .into_iter()
         .map(|(name, rows)| {
@@ -431,6 +467,40 @@ fn build_period(
             let unknown = count("unknown");
             let bug_rate = if bug_links_available { rate(affected, delivered_count) } else { None };
             let delay_rate = rate(count("overdueAtEnd"), due - unknown);
+            let on_time_rate = rate(
+                count("onTime"),
+                count("onTime") + count("deliveredLate") + count("overdueAtEnd"),
+            );
+            let sonar = pushes_by_person.remove(&name).map(|pushes| {
+                let mut recent: Vec<_> = pushes.values().copied().collect();
+                recent.sort_by_key(|report| {
+                    std::cmp::Reverse(timestamp(&report.data["push"], "pushedAt"))
+                });
+                let passed =
+                    recent.iter().filter(|report| text(&report.data, "gate") == "OK").count();
+                let evaluated = recent
+                    .iter()
+                    .filter(|report| matches!(text(&report.data, "gate"), "OK" | "ERROR"))
+                    .count();
+                SonarPushMetrics {
+                    pushes: recent.len(),
+                    evaluated,
+                    passed,
+                    pass_rate: rate(passed, evaluated),
+                    recent: recent
+                        .into_iter()
+                        .take(10)
+                        .map(|report| {
+                            let mut data = report.data.clone();
+                            if let Some(fields) = data.as_object_mut() {
+                                fields.remove("member");
+                                fields.remove("group");
+                            }
+                            data
+                        })
+                        .collect(),
+                }
+            });
             let group = group_candidates
                 .get(&name)
                 .filter(|groups| groups.len() == 1)
@@ -463,10 +533,12 @@ fn build_period(
                 overdue_at_end: count("overdueAtEnd"),
                 unknown_delivery: unknown,
                 delay_rate,
+                on_time_rate,
+                sonar,
                 radar: [
                     Some((delivered_count as f64 / target * 100.0).min(100.0)),
                     bug_rate.map(|r| 100.0 - r),
-                    delay_rate.map(|r| 100.0 - r),
+                    on_time_rate,
                 ],
                 requirements: rows,
             }
