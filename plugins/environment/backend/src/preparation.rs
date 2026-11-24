@@ -112,6 +112,26 @@ impl Preparation<'_> {
         variables: BTreeMap<String, String>,
         processors: &[Processor],
     ) -> Result<PreparedVariables, PluginError> {
+        self.run_scoped(variables, processors, true).await
+    }
+
+    pub async fn run_scenario_step(
+        &self,
+        variables: BTreeMap<String, String>,
+        processors: &[Processor],
+    ) -> Result<PreparedVariables, PluginError> {
+        if !matches!(processors, [Processor::Sql { .. }]) {
+            return Err(PluginError::UnsupportedOperation("scenario plugin step".into()));
+        }
+        self.run_scoped(variables, processors, false).await
+    }
+
+    async fn run_scoped(
+        &self,
+        variables: BTreeMap<String, String>,
+        processors: &[Processor],
+        include_environment_preparation: bool,
+    ) -> Result<PreparedVariables, PluginError> {
         if self.context.cancellation.is_cancelled() {
             return Err(PluginError::Cancelled);
         }
@@ -121,7 +141,7 @@ impl Preparation<'_> {
         let result = tokio::select! {
             biased;
             _=self.context.cancellation.cancelled()=>return Err(PluginError::Cancelled),
-            result=tokio::time::timeout(Duration::from_millis(self.context.limits.timeout_ms),self.run_inner(variables,processors))=>result.map_err(|_|PluginError::Timeout)??,
+            result=tokio::time::timeout(Duration::from_millis(self.context.limits.timeout_ms),self.run_inner(variables,processors,include_environment_preparation))=>result.map_err(|_|PluginError::Timeout)??,
         };
         if serde_json::to_vec(&result).map_err(|_| PluginError::OutputLimit)?.len()
             > self.context.limits.max_output_bytes
@@ -221,6 +241,7 @@ impl Preparation<'_> {
         &self,
         variables: BTreeMap<String, String>,
         processors: &[Processor],
+        include_environment_preparation: bool,
     ) -> Result<PreparedVariables, PluginError> {
         let started = Instant::now();
         let scope = &self.context.scope;
@@ -234,7 +255,10 @@ impl Preparation<'_> {
             a.priority.cmp(&b.priority).then_with(|| a.profile_id.cmp(&b.profile_id))
         });
         let mut pending = Vec::new();
-        for binding in bindings.iter().filter(|b| b.enabled && b.slot == BindingSlot::Pre) {
+        for binding in bindings
+            .iter()
+            .filter(|b| include_environment_preparation && b.enabled && b.slot == BindingSlot::Pre)
+        {
             let profile = self
                 .store
                 .get(&scope.project_id, &binding.profile_id)
@@ -249,6 +273,11 @@ impl Preparation<'_> {
         }
         for (index, processor) in processors.iter().enumerate() {
             let steps = match processor {
+                Processor::UnsupportedPostProcessing => {
+                    return Err(PluginError::InvalidConfig(
+                        "unsupported post-processing step".into(),
+                    ));
+                }
                 Processor::Plugin { profile_id } => self.plan_profile(profile_id).await?,
                 Processor::Wait { ms } => vec![Step::Wait { ms: *ms }],
                 Processor::Script { lang, code }
@@ -256,6 +285,9 @@ impl Preparation<'_> {
                         || lang.eq_ignore_ascii_case("JAVASCRIPT") =>
                 {
                     vec![Step::Javascript { code: code.clone() }]
+                }
+                Processor::SandboxScript { .. } => {
+                    return Err(PluginError::UnsupportedOperation("server sandbox script".into()));
                 }
                 Processor::Script { .. } => {
                     return Err(PluginError::UnsupportedOperation(
@@ -291,11 +323,17 @@ impl Preparation<'_> {
                 Step::Variables { values } => Operation::Variables { values },
                 Step::Javascript { code } => Operation::Javascript { code },
                 Step::Wait { ms } => Operation::Wait { ms },
-                Step::Invoke { profile_id, input, result_variable } => Operation::Invoke {
-                    profile: Box::new(self.data_source(&profile_id, &bindings).await?),
-                    input,
-                    result_variable,
-                },
+                Step::Invoke { profile_id, input, result_variable } => {
+                    let profile = self.data_source(&profile_id, &bindings).await?;
+                    if !include_environment_preparation
+                        && !matches!(profile.plugin_id.as_str(), "postgres" | "mysql")
+                    {
+                        return Err(PluginError::UnsupportedOperation(
+                            "scenario steps require a database profile".into(),
+                        ));
+                    }
+                    Operation::Invoke { profile: Box::new(profile), input, result_variable }
+                }
             };
             planned.push(Planned { source, kind, operation });
         }

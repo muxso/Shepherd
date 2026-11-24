@@ -1,7 +1,10 @@
 //! Host registration for optional integrations. Plugins share sessions, never business storage.
 use std::sync::Arc;
 
-use axum::{routing::get, Json, Router};
+#[path = "../../../plugins/sonar/backend.rs"]
+mod sonar;
+
+use axum::{http::StatusCode, routing::get, Json, Router};
 use serde_json::{json, Value};
 use webauth::{AuthUser, SessionStore};
 
@@ -25,14 +28,33 @@ fn catalog(enabled: bool) -> Value {
             .expect("valid environment plugin manifest");
     environment["installed"] = json!(cfg!(feature = "environment-plugins"));
     environment["enabled"] = json!(crate::environment_extension::enabled());
-    json!({"items": [plugin, environment]})
+    let mut quality: Value =
+        serde_json::from_str(include_str!("../../../plugins/sonar/plugin.json"))
+            .expect("valid bundled plugin manifest");
+    quality["installed"] = json!(true);
+    quality["enabled"] =
+        json!(selected(&std::env::var("SHEPHERD_PLUGINS").unwrap_or_default(), "sonar"));
+    json!({"items": [plugin, environment, quality]})
+}
+
+fn managed_catalog(user: AuthUser, enabled: bool) -> Result<Json<Value>, StatusCode> {
+    if !user.can("PLUGIN", "READ") {
+        return Err(StatusCode::FORBIDDEN);
+    }
+    Ok(Json(catalog(enabled)))
 }
 
 pub async fn router(
     host_pool: &sqlx::PgPool,
     sessions: Arc<dyn SessionStore>,
+    notifier: notice::application::Notifier,
 ) -> Result<Router, Box<dyn std::error::Error>> {
     let enabled = yunxiao_enabled();
+    let sonar_pool = if selected(&std::env::var("SHEPHERD_PLUGINS").unwrap_or_default(), "sonar") {
+        Some(sonar::connect(host_pool).await?)
+    } else {
+        None
+    };
     #[cfg(feature = "yunxiao")]
     if enabled {
         let url = std::env::var("SHEPHERD_YUNXIAO_DATABASE_URL")
@@ -49,19 +71,56 @@ pub async fn router(
             return Err("Yunxiao must use a different database from Shepherd".into());
         }
         yunxiao::adapters::pg::migrate(&pool).await?;
-        return Ok(registered(pool, sessions, true));
+        let sonar_routes = sonar_pool.as_ref().map(|sonar_pool| {
+            sonar::router(
+                sonar_pool.clone(),
+                sessions.clone(),
+                Some(pool.clone()),
+                notifier.clone(),
+                host_pool.clone(),
+            )
+        });
+        let notification_routes = crate::devops_notification::router(
+            host_pool.clone(),
+            sessions.clone(),
+            Arc::new(
+                yunxiao::adapters::pg::PgStore::new(pool.clone())
+                    .with_sonar_pool(sonar_pool.clone()),
+            ),
+        );
+        let routes = registered(pool, sessions, true, sonar_pool).merge(notification_routes);
+        return Ok(match sonar_routes {
+            Some(quality) => routes.merge(quality),
+            None => routes,
+        });
     }
     // No plugin pool is opened or migrated when disabled.
     let _ = (host_pool, enabled);
-    Ok(Router::new()
+    let sonar_routes = sonar_pool
+        .map(|pool| sonar::router(pool, sessions.clone(), None, notifier, host_pool.clone()));
+    let routes = Router::new()
         .route("/api/plugins", get(|_user: AuthUser| async { Json(catalog(false)) }))
-        .with_state(sessions))
+        .route("/api/plugins/manage", get(|user: AuthUser| async { managed_catalog(user, false) }))
+        .with_state(sessions);
+    Ok(match sonar_routes {
+        Some(quality) => routes.merge(quality),
+        None => routes,
+    })
 }
 
 #[cfg(any(feature = "yunxiao", test))]
-fn registered(pool: sqlx::PgPool, sessions: Arc<dyn SessionStore>, enabled: bool) -> Router {
+fn registered(
+    pool: sqlx::PgPool,
+    sessions: Arc<dyn SessionStore>,
+    enabled: bool,
+    sonar_pool: Option<sqlx::PgPool>,
+) -> Router {
     let routes = Router::new()
         .route("/api/plugins", get(move |_user: AuthUser| async move { Json(catalog(enabled)) }))
+        .route(
+            "/api/plugins/manage",
+            get(move |user: AuthUser| async move { managed_catalog(user, enabled) }),
+        )
         .with_state(sessions.clone());
     #[cfg(feature = "yunxiao")]
     if enabled {
@@ -69,7 +128,9 @@ fn registered(pool: sqlx::PgPool, sessions: Arc<dyn SessionStore>, enabled: bool
             .or_else(|_| std::env::var("SHEPHERD_FLEET_REDIS"))
             .or_else(|_| std::env::var("REDIS_URL"))
             .ok();
-        let store = yunxiao::adapters::pg::PgStore::new(pool).with_redis_url(cache_url.as_deref());
+        let store = yunxiao::adapters::pg::PgStore::new(pool)
+            .with_redis_url(cache_url.as_deref())
+            .with_sonar_pool(sonar_pool);
         store.start_statistics_warmer();
         return routes.merge(
             yunxiao::adapters::http::router(
@@ -79,7 +140,7 @@ fn registered(pool: sqlx::PgPool, sessions: Arc<dyn SessionStore>, enabled: bool
             .layer(tower_http::compression::CompressionLayer::new()),
         );
     }
-    let _ = pool;
+    let _ = (pool, sonar_pool);
     routes
 }
 
@@ -110,7 +171,7 @@ mod tests {
             )
             .await
             .expect("session");
-        let app = registered(pool, sessions, false);
+        let app = registered(pool, sessions, false, None);
         for (path, auth, status) in [
             ("/api/devops/sources", false, 404),
             ("/api/plugins", false, 401),
@@ -141,7 +202,7 @@ mod tests {
             .connect_lazy("postgres://localhost/shepherd_unused")
             .expect("lazy pool");
         let sessions = Arc::new(webauth::testing::InMemorySessionStore::new());
-        let app = registered(pool, sessions, true);
+        let app = registered(pool, sessions, true, None);
         let response = app
             .oneshot(
                 Request::builder().uri("/api/devops/sources").body(Body::empty()).expect("request"),

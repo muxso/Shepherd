@@ -1,4 +1,8 @@
 import type { ActivityBug, ActivityEvent, ActivityKind, ActivityMember, ActivityRole, TeamActivityData } from './api'
+
+export function passRateText(passed: number, evaluated: number) {
+  return evaluated > 0 ? `${new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 1 }).format(100 * passed / evaluated)}%` : '—'
+}
 export const activityRoles: { value: ActivityRole; label: string; metrics: { value: ActivityKind; label: string }[] }[] = [
   { value: 'code', label: '研发 · 代码', metrics: [{ value: 'commit', label: '代码提交' }] },
   { value: 'product', label: '产品 · 需求', metrics: [{ value: 'requirementCreated', label: '新增需求' }, { value: 'requirementDelivered', label: '交付需求' }] },

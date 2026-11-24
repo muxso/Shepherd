@@ -24,14 +24,22 @@ const CATALOG: PermGroup[] = [
   {
     key: 'project', label: '项目',
     resources: [
+      { res: 'SONAR', label: '代码质量', actions: ['READ'] },
+      { res: 'SONAR_CODE', label: '提交代码差异', actions: ['READ'] },
+      { res: 'DEVOPS', label: '云效研发统计', actions: ['READ'] },
       { res: 'PROJECT', label: '项目', actions: ['READ', 'ADD', 'UPDATE'] },
       { res: 'ORGANIZATION', label: '组织', actions: ['READ', 'ADD', 'UPDATE', 'DELETE'] },
       { res: 'SYSTEM_USER', label: '用户', actions: ['READ', 'ADD', 'UPDATE', 'DELETE'] },
       { res: 'USER_ROLE', label: '用户组', actions: ['READ', 'ADD', 'UPDATE', 'DELETE'] },
       { res: 'ENVIRONMENT', label: '环境', actions: ['READ', 'ADD', 'UPDATE', 'DELETE'] },
       { res: 'APIKEY', label: 'APIKEY', actions: ['READ', 'ADD', 'DELETE'] },
+      { res: 'SYSTEM_PARAMETER', label: '系统参数', actions: ['READ', 'UPDATE'] },
+      { res: 'TASK_CENTER', label: '任务中心', actions: ['READ', 'UPDATE'] },
+      { res: 'PLUGIN', label: '插件', actions: ['READ'] },
+      { res: 'SYSTEM_LOG', label: '系统日志', actions: ['READ'] },
       { res: 'RESOURCE_POOL', label: '资源池', actions: ['READ', 'ADD', 'UPDATE', 'DELETE'] },
       { res: 'RUNNER', label: '执行器', actions: ['READ', 'ADD', 'EDIT', 'EXECUTE'] },
+      { res: 'SCRIPT', label: '公共脚本', actions: ['READ', 'ADD', 'UPDATE', 'EXECUTE'] },
       { res: 'SKILL', label: '技能', actions: ['READ', 'ADD', 'UPDATE', 'DELETE'] },
     ],
   },
@@ -50,6 +58,7 @@ const CATALOG: PermGroup[] = [
   {
     key: 'test', label: '测试',
     resources: [
+      { res: 'TEST_ASSET', label: '服务资产', actions: ['READ', 'UPDATE'] },
       { res: 'FUNCTIONAL_CASE', label: '功能用例', actions: ['READ', 'ADD', 'UPDATE', 'DELETE'] },
       { res: 'API_DEFINITION', label: '接口定义', actions: ['READ', 'ADD', 'UPDATE', 'EXECUTE'] },
       { res: 'API_SCENARIO', label: '场景', actions: ['READ', 'ADD', 'UPDATE', 'EXECUTE'] },

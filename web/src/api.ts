@@ -34,15 +34,41 @@ export const setUnauthorizedHandler = (fn: () => void) => {
   onUnauthorized = fn
 }
 
+export interface ReportShare {
+  token: string
+  expiresAt: number
+}
+
+export interface ReportAddress {
+  baseUrl: string | null
+  effectiveBaseUrl: string | null
+  canEdit: boolean
+}
+
 export class ApiError extends Error {
   status: number
-  constructor(status: number, message: string) {
-    super(message)
+  constructor(status: number, readonly responseText: string) {
+    super(status === 403 ? '当前账号没有执行此操作的权限。如需访问，请联系管理员。' : responseText)
     this.status = status
   }
 }
 
+const projectMetadata = new Map<string, { expires: number; value: Promise<unknown> }>()
+function cachedProjectMetadata<T>(path: string): Promise<T> {
+  const key = `${tokenStore.get() ?? ''}:${path}`
+  const cached = projectMetadata.get(key)
+  if (cached && cached.expires > Date.now()) return cached.value as Promise<T>
+  const value = request<T>('GET', path)
+  if (projectMetadata.size >= 100) projectMetadata.clear()
+  projectMetadata.set(key, { expires: Date.now() + 20_000, value })
+  void value.catch(() => {
+    if (projectMetadata.get(key)?.value === value) projectMetadata.delete(key)
+  })
+  return value
+}
+
 export async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+  if (method !== 'GET') projectMetadata.clear()
   const headers: Record<string, string> = {}
   const token = tokenStore.get()
   if (token) headers['authorization'] = `Bearer ${token}`
@@ -516,7 +542,7 @@ export interface ScenarioReportDetail {
   startedAt?: string | null
   finishedAt?: string | null
   durationMs?: number | null
-  /** Owning scenario id (present only on public share reads) → enables the step-tree view. */
+  /** Owning scenario id, when available, enables the step-tree view. */
   scenarioId?: string
   results: ReportResultItem[]
 }
@@ -737,6 +763,12 @@ export interface RagReviewResult {
   sources: RagSource[]
 }
 
+export interface ProjectGroups {
+  items: { id: string; name: string; scope: string; memberCount: number }[]
+  available: { id: string; name: string }[]
+  canManage: boolean
+}
+
 export interface ProjectMember {
   projectId: string
   userId: string
@@ -750,6 +782,8 @@ export interface CaseStep {
   expected: string
 }
 
+export type FunctionalCaseOption = Pick<FunctionalCase, 'id' | 'name' | 'module'>
+
 export interface FunctionalCase {
   id: string
   projectId: string
@@ -761,6 +795,7 @@ export interface FunctionalCase {
   status?: string
   tags?: string[]
   steps?: CaseStep[]
+  stepCount?: number
   customFields?: Record<string, string>
   /** Creator user_id (migration 0063). */
   createdBy?: string
@@ -1471,7 +1506,7 @@ export const api = {
   login: (username: string, password: string) =>
     http.post<{ token: string; userId?: string }>('/auth/login', { username, password }),
 
-  organizations: () => http.get<Page<Organization>>('/organization?pageSize=100'),
+  organizations: () => cachedProjectMetadata<Page<Organization>>('/organization?pageSize=100'),
   createOrganization: (name: string) => http.post<Organization>('/organization', { name }),
   updateOrganization: (id: string, b: { name: string; enable: boolean }) =>
     http.put<Organization>(`/organization/${id}`, b),
@@ -1480,6 +1515,8 @@ export const api = {
     organizationId
       ? http.get<Page<Project>>(`/project?organizationId=${encodeURIComponent(organizationId)}&pageSize=100`)
       : Promise.resolve(emptyPage<Project>()),
+  renameProject: (id: string, name: string) =>
+    http.patch<void>(`/project/${encodeURIComponent(id)}/name`, { name }),
   createProject: (organizationId: string, name: string) =>
     http.post<Project>('/project', { organizationId, name }),
 
@@ -1614,6 +1651,8 @@ export const api = {
       auth?: { type: string; token?: string }
     },
   ) => http.post<ApiCase>(`/api/definition/${definitionId}/case`, b),
+  runScriptedCase: (caseId: string, projectId: string, environmentId?: string) =>
+    http.post<{ reportId: string; status: string }>(`/api/case/${caseId}/run-scripted`, { projectId, environmentId }),
   runCase: (caseId: string, projectId: string, runMode: RunMode, poolId?: string) =>
     http.post<{ reportId: string; status: string }>(`/api/case/${caseId}/run`, {
       projectId,
@@ -1630,6 +1669,12 @@ export const api = {
   deleteResourcePool: (id: string) => http.del<void>(`/api/resource-pool/${id}`),
 
   // Project members
+  projectGroups: (projectId: string) =>
+    http.get<ProjectGroups>(`/project/${encodeURIComponent(projectId)}/groups`),
+  linkProjectGroup: (projectId: string, roleId: string) =>
+    http.put<void>(`/project/${encodeURIComponent(projectId)}/groups/${encodeURIComponent(roleId)}`),
+  unlinkProjectGroup: (projectId: string, roleId: string) =>
+    http.del<void>(`/project/${encodeURIComponent(projectId)}/groups/${encodeURIComponent(roleId)}`),
   projectMembers: (projectId: string) =>
     http.get<ProjectMember[]>(`/project/${encodeURIComponent(projectId)}/member`),
   // Resolve user ids -> display names (id-only members become usable labels).
@@ -1644,7 +1689,7 @@ export const api = {
 
   // Project templates (kind selects the purpose, currently only requirement; name unique per project+kind, duplicate → 409)
   projectTemplates: (projectId: string, kind: string) =>
-    http.get<{ items: ProjectTemplate[] }>(`/project/${encodeURIComponent(projectId)}/template?kind=${encodeURIComponent(kind)}`),
+    cachedProjectMetadata<{ items: ProjectTemplate[] }>(`/project/${encodeURIComponent(projectId)}/template?kind=${encodeURIComponent(kind)}`),
   createProjectTemplate: (projectId: string, b: { kind: string; name: string; config: FieldTemplateConfig }) =>
     http.post<ProjectTemplate>(`/project/${encodeURIComponent(projectId)}/template`, b),
   updateProjectTemplate: (id: string, b: { name?: string; config?: FieldTemplateConfig }) =>
@@ -1708,6 +1753,8 @@ export const api = {
   deleteLlmModel: (id: string) => http.del(`/me/llm-model/${encodeURIComponent(id)}`),
 
   // RAG config (system-level, /system/rag/config): keys are write-only; GET returns *KeySet booleans.
+  reportAddress: () => http.get<ReportAddress>('/system/report-address'),
+  updateReportAddress: (baseUrl: string) => http.put<ReportAddress>('/system/report-address', { baseUrl }),
   ragConfig: () => http.get<RagConfigView>('/system/rag/config'),
   saveRagConfig: (b: RagConfigBody) => http.put('/system/rag/config', b),
   // AI requirement review: retrieves KB context and returns an advisory opinion (human still decides).
@@ -1719,6 +1766,14 @@ export const api = {
     projectId
       ? http.get<FunctionalCase[]>(`/functional-case?projectId=${encodeURIComponent(projectId)}`)
       : Promise.resolve([] as FunctionalCase[]),
+  functionalCaseOptions: (projectId: string) =>
+    projectId
+      ? http.get<FunctionalCaseOption[]>(`/functional-case?projectId=${encodeURIComponent(projectId)}&mode=options`)
+      : Promise.resolve([] as FunctionalCaseOption[]),
+  functionalCaseSummaries: (projectId: string, preview = false) =>
+    http.get<FunctionalCase[]>(`/functional-case?projectId=${encodeURIComponent(projectId)}&mode=${preview ? "preview" : "summary"}`),
+  functionalCaseCount: (projectId: string) =>
+    http.get<{ total: number }>(`/functional-case?projectId=${encodeURIComponent(projectId)}&mode=count`).then(result => result.total),
   createFunctionalCase: (b: {
     projectId: string
     name: string
@@ -1781,11 +1836,13 @@ export const api = {
   deleteComment: (id: string) => http.del(`/comment/${id}`),
 
   // Project API cases (for test-plan case selection)
-  projectCases: (projectId: string) =>
+  projectCases: (projectId: string, pageSize = 100) =>
     projectId
-      ? http.get<Page<ApiCase>>(`/api/case?projectId=${encodeURIComponent(projectId)}&pageSize=100`)
+      ? http.get<Page<ApiCase>>(`/api/case?projectId=${encodeURIComponent(projectId)}&pageSize=${pageSize}`)
       : Promise.resolve(emptyPage<ApiCase>()),
   // Page through all project cases (for the scenario step id→name map: a single page misses cases when there are >100, making step names fall back to short ids).
+  referencedApiCases: (projectId: string, ids: string[]) =>
+    http.get<ApiCase[]>('/api/case/references?' + new URLSearchParams({ projectId, ids: ids.join(',') })),
   projectCasesAll: async (projectId: string): Promise<ApiCase[]> => {
     if (!projectId) return []
     const size = 200
@@ -1833,7 +1890,7 @@ export const api = {
   deletePlanSchedule: (id: string) => http.del(`/test-plan/${id}/schedule`),
   planRuns: (id: string) => http.get<unknown[]>(`/test-plan/${id}/runs`),
   planReportMd: (id: string) => http.getText(`/test-plan/${id}/report.md`),
-  sharePlanReport: (id: string) => http.post<{ token: string }>(`/test-plan/${id}/report/share`),
+  sharePlanReport: (id: string, expiresInDays: number) => http.post<ReportShare>(`/test-plan/${id}/report/share`, { expiresInDays }),
   publicPlanReportMd: (token: string) => http.getText(`/public/test-plan-report/${token}`),
 
   // Perf testing (no list endpoint → report list lives in the frontend registry)
@@ -1864,8 +1921,14 @@ export const api = {
     http.post<{ title: string; description: string; acceptanceCriteria: string[]; priority: string; source: 'llm' | 'heuristic' }>('/requirement/draft', { raw }),
   getRequirement: (id: string) => http.get<Requirement>(`/requirement/${id}`),
   // List comes from the backend (paged); large pageSize pulls everything at once so CLI/API-created requirements show in the UI.
-  requirements: async (projectId: string) => {
-    const url = `/requirement?projectId=${encodeURIComponent(projectId)}&pageSize=200`
+  requirements: async (projectId: string, onFirstPage?: (page: Page<Requirement>) => void) => {
+    const base = `/requirement?projectId=${encodeURIComponent(projectId)}`
+    if (onFirstPage) {
+      const preview = await http.get<Page<Requirement>>(`${base}&pageSize=25&current=1`)
+      onFirstPage(preview)
+      if (preview.totalPages <= 1) return preview
+    }
+    const url = `${base}&pageSize=200`
     const first = await http.get<Page<Requirement>>(`${url}&current=1`)
     const items = [...first.items]
     // Fetch every page; an imported project can contain far more than 200 requirements.
@@ -2066,7 +2129,7 @@ export const api = {
 
   // Skills — list/detail/update/delete backend-driven
   skills: (projectId: string) =>
-    projectId ? http.get<Skill[]>(`/skill?projectId=${encodeURIComponent(projectId)}`) : Promise.resolve([] as Skill[]),
+    projectId ? cachedProjectMetadata<Skill[]>(`/skill?projectId=${encodeURIComponent(projectId)}`) : Promise.resolve([] as Skill[]),
   getSkill: (id: string) => http.get<Skill>(`/skill/${id}`),
   createSkill: (b: { projectId: string; name: string; instructions: string; description?: string; includes?: string[] }) =>
     http.post<Skill>('/skill', b),
@@ -2077,7 +2140,7 @@ export const api = {
     http.post<{ instructions: string }>('/skill/compose', { projectId, skillIds }),
 
   // API debug console: fire a request in-process (POST /api/debug/send)
-  debugSend: (b: { baseUrl?: string; variables?: Record<string, string>; preProcessors?: unknown[]; query?: { key: string; value: string }[]; environmentId?: string; protocol?: string; method: string; url: string; headers?: { key: string; value: string }[]; body?: string; meta?: Record<string, string>; assertions?: unknown[]; processors?: unknown[] }) =>
+  debugSend: (b: { projectId?: string; baseUrl?: string; variables?: Record<string, string>; preProcessors?: unknown[]; query?: { key: string; value: string }[]; environmentId?: string; protocol?: string; method: string; url: string; headers?: { key: string; value: string }[]; body?: string; meta?: Record<string, string>; assertions?: unknown[]; processors?: unknown[] }) =>
     http.post<DebugResponse>('/api/debug/send', b),
   // Protocol plugins enabled on the backend (returns whichever features are compiled in); debug console renders them dynamically.
   debugProtocols: () => http.get<{ protocols: string[] }>('/api/debug/protocols'),
@@ -2089,7 +2152,7 @@ export const api = {
   // Environments (project level)
   environments: (projectId: string) =>
     projectId
-      ? http.get<Environment[]>(`/api/environment?projectId=${encodeURIComponent(projectId)}`)
+      ? cachedProjectMetadata<Environment[]>(`/api/environment?projectId=${encodeURIComponent(projectId)}`)
       : Promise.resolve([] as Environment[]),
   createEnvironment: (b: EnvironmentBody) => http.post<Environment>('/api/environment', b),
   updateEnvironment: (id: string, b: EnvironmentBody) => http.put<Environment>(`/api/environment/${id}`, b),
@@ -2198,8 +2261,8 @@ export const api = {
     http.get<ScenarioReportDetail>(`/api/scenario-report/${reportId}`),
   // Public share: mint an unguessable token, then read the report anonymously (no auth) by that token.
   // `scenarioId` is remembered so the public page can render the same step tree as the in-app report.
-  shareScenarioReport: (reportId: string, scenarioId?: string) =>
-    http.post<{ token: string }>(`/api/scenario-report/${reportId}/share`, { scenarioId }),
+  shareScenarioReport: (reportId: string, expiresInDays: number) =>
+    http.post<ReportShare>(`/api/scenario-report/${reportId}/share`, { expiresInDays }),
   publicScenarioReport: (token: string) =>
     http.get<ScenarioReportDetail>(`/public/scenario-report/${token}`),
   // Token-guarded public read of a scenario's structure (for the shared report's step tree).
@@ -2232,4 +2295,5 @@ export interface Plugin {
 }
 export const pluginApi = {
   list: () => request<{ items: Plugin[] }>('GET', '/api/plugins'),
+  managementList: () => request<{ items: Plugin[] }>('GET', '/api/plugins/manage'),
 }

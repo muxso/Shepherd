@@ -1,13 +1,12 @@
-import { useCallback, useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { Button, Card, Checkbox, Divider, Dropdown, Segmented, Select, Table, Tag, Tooltip } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import { DownOutlined, ReloadOutlined } from '@ant-design/icons'
 import { useScopedNavigate } from '../scope'
-import { api, type Bug, type CaseReviewSummary, type FunctionalCase, type PlanStats } from '../api'
+import { api, type Bug, type CaseReviewSummary, type FunctionalCase } from '../api'
 import { useApp } from '../context'
 import { useI18n } from '../i18n'
 import { SelectProjectEmpty } from './Page'
-import type { RegItem } from '../registry'
 import { fetchPlanItems, isGroup } from './plan/planLocal'
 import { funcCaseStatusLabel, priorityColor } from './tags'
 
@@ -114,7 +113,8 @@ export default function WorkbenchSections({ mode }: { mode: 'todo' | 'follow' })
       ? ['plan', 'funcCase', 'review', 'apiCase', 'apiScenario', 'bug']
       : ['plan', 'review', 'bug'],
   )
-  const [loading, setLoading] = useState(false)
+  const [pending, setPending] = useState<Set<SectionKey>>(new Set())
+  const [revision, setRevision] = useState(0)
   const [planRows, setPlanRows] = useState<PlanRow[]>([])
   const [planScope, setPlanScope] = useState<PlanScope>('all')
   const [funcRows, setFuncRows] = useState<FunctionalCase[]>([])
@@ -123,84 +123,83 @@ export default function WorkbenchSections({ mode }: { mode: 'todo' | 'follow' })
   const [apiCaseRows, setApiCaseRows] = useState<ApiCaseRow[]>([])
   const [scenarioRows, setScenarioRows] = useState<ApiCaseRow[]>([])
 
-  const load = useCallback(async () => {
+  useEffect(() => {
     if (!pid) return
-    setLoading(true)
-    try {
-      const loadPlans = async () => {
-        let plans = await fetchPlanItems(pid).catch(() => [] as RegItem[])
-        if (mode === 'follow') {
-          const fs = planFollowSet()
-          plans = plans.filter((p) => fs.has(p.id))
-        }
-        const entries = await Promise.all(
-          plans.map((p) => api.planStats(p.id).then((s) => [p.id, s] as const).catch(() => null)),
-        )
-        const statsMap = Object.fromEntries(entries.filter(Boolean) as [string, PlanStats][])
-        let rows: PlanRow[] = plans.map((p) => {
-          const s = statsMap[p.id]
-          const status: PlanStatus = !s || s.executeRate === 0 ? 'notStarted' : s.isPass ? 'done' : 'inProgress'
-          return {
-            id: p.id,
-            name: p.label,
-            status,
-            passRate: s?.passRate ?? 0,
-            total: s?.total ?? 0,
-            createdBy: p.meta?.createdBy || '-',
-            createdAt: p.createdAt,
-            group: isGroup(p),
-          }
+    let live = true
+    const keys: SectionKey[] = mode === 'follow'
+      ? ['plan', 'funcCase', 'review', 'apiCase', 'apiScenario', 'bug']
+      : ['plan', 'review', 'bug']
+    setPending(new Set(keys))
+    setPlanRows([]); setFuncRows([]); setReviews([]); setBugRows([]); setApiCaseRows([]); setScenarioRows([])
+    const followedIds = (kind: string) => api.myFollows(pid, kind).then(result => new Set(result.entityIds))
+    const followedList = async <Row extends { id: string },>(kind: string, list: (projectId: string) => Promise<Row[]>) => {
+      const ids = await followedIds(kind)
+      return live && ids.size ? (await list(pid)).filter(row => ids.has(row.id)) : []
+    }
+    const run = async <Row,>(key: SectionKey, get: () => Promise<Row[]>, set: (rows: Row[]) => void) => {
+      try {
+        const rows = await get()
+        if (live) set(rows)
+      } catch {
+        if (live) set([])
+      } finally {
+        if (live) setPending(current => {
+          const next = new Set(current)
+          next.delete(key)
+          return next
         })
-        if (mode === 'todo') {
-          // Pending = not finished-and-passed.
-          rows = rows.filter((r) => {
-            const s = statsMap[r.id]
-            return !s || s.executeRate < 1 || !s.isPass
-          })
+      }
+    }
+    const loadPlans = async () => {
+      const followed = mode === 'follow' ? planFollowSet() : null
+      if (followed && !followed.size) return []
+      const plans = (await fetchPlanItems(pid)).filter(plan => !followed || followed.has(plan.id))
+      if (!live) return []
+      const entries = await Promise.all(plans.map(plan =>
+        api.planStats(plan.id).then(stats => [plan.id, stats] as const).catch(() => null),
+      ))
+      const statsMap = new Map(entries.filter(entry => entry !== null))
+      return plans.filter(plan => {
+        const stats = statsMap.get(plan.id)
+        return mode === 'follow' || !stats || stats.executeRate < 1 || !stats.isPass
+      }).map((plan): PlanRow => {
+        const stats = statsMap.get(plan.id)
+        return {
+          id: plan.id,
+          name: plan.label,
+          status: !stats || stats.executeRate === 0 ? 'notStarted' : stats.isPass ? 'done' : 'inProgress',
+          passRate: stats?.passRate ?? 0,
+          total: stats?.total ?? 0,
+          createdBy: plan.meta?.createdBy || '-',
+          createdAt: plan.createdAt,
+          group: isGroup(plan),
         }
-        setPlanRows(rows)
-      }
-      const loadFuncCases = async () => {
-        if (mode !== 'follow') { setFuncRows([]); return }
-        const [cases, ids] = await Promise.all([
-          api.functionalCases(pid).catch(() => [] as FunctionalCase[]),
-          api.myFollows(pid, 'FUNCTIONAL_CASE').then((r) => r.entityIds || []).catch(() => [] as string[]),
-        ])
-        const idSet = new Set(ids)
-        setFuncRows(cases.filter((c) => idSet.has(c.id)))
-      }
-      const loadReviews = async () => {
-        if (mode === 'follow') {
-          const [rv, ids] = await Promise.all([
-            api.caseReviews(pid).catch(() => [] as CaseReviewSummary[]),
-            api.myFollows(pid, 'CASE_REVIEW').then((r) => r.entityIds || []).catch(() => [] as string[]),
-          ])
-          const idSet = new Set(ids)
-          setReviews(rv.filter((r) => idSet.has(r.id)))
-          return
+      })
+    }
+    void run('plan', loadPlans, setPlanRows)
+    void run('review', async () => mode === 'follow'
+      ? followedList('CASE_REVIEW', api.caseReviews)
+      : (await api.caseReviews(pid)).filter(review => review.passed < review.total || review.total === 0), setReviews)
+    void run('bug', async () => mode === 'follow'
+      ? followedList('bug', api.bugs)
+      : (await api.bugs(pid)).filter(bug => ['NEW', 'REOPENED'].includes((bug.status || '').toUpperCase())), setBugRows)
+
+    if (mode === 'follow') {
+      void run('funcCase', async () => {
+        const ids = [...await followedIds('FUNCTIONAL_CASE')]
+        const rows: FunctionalCase[] = []
+        for (let start = 0; live && start < ids.length; start += 8) {
+          const cases = await Promise.all(ids.slice(start, start + 8).map(id => api.getFunctionalCase(id).catch(() => null)))
+          rows.push(...cases.filter((row): row is FunctionalCase => row !== null && row.projectId === pid))
         }
-        const rv = await api.caseReviews(pid).catch(() => [] as CaseReviewSummary[])
-        setReviews(rv.filter((r) => r.passed < r.total || r.total === 0))
-      }
-      const loadBugs = async () => {
-        const bugs = await api.bugs(pid).catch(() => [] as Bug[])
-        if (mode === 'follow') {
-          const ids = await api.myFollows(pid, 'bug').then((r) => r.entityIds || []).catch(() => [] as string[])
-          const idSet = new Set(ids)
-          setBugRows(bugs.filter((b) => idSet.has(b.id)))
-        } else {
-          setBugRows(bugs.filter((b) => ['NEW', 'REOPENED'].includes((b.status || '').toUpperCase())))
-        }
-      }
-      const loadApiCases = async () => {
-        if (mode !== 'follow') { setApiCaseRows([]); return }
-        const [cases, ids] = await Promise.all([
-          api.projectCasesAll(pid).catch(() => []),
-          api.myFollows(pid, 'API_CASE').then((r) => r.entityIds || []).catch(() => [] as string[]),
-        ])
-        const idSet = new Set(ids)
-        setApiCaseRows(
-          cases.filter((c) => idSet.has(c.id)).map((c) => ({
+        return rows.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''))
+      }, setFuncRows)
+      void run('apiCase', async () => {
+        const ids = [...await followedIds('API_CASE')]
+        const rows: ApiCaseRow[] = []
+        for (let start = 0; live && start < ids.length; start += 100) {
+          const cases = await api.referencedApiCases(pid, ids.slice(start, start + 100))
+          rows.push(...cases.map(c => ({
             id: c.id,
             displayId: shortId(c.id),
             name: c.name,
@@ -210,37 +209,25 @@ export default function WorkbenchSections({ mode }: { mode: 'todo' | 'follow' })
             env: '-',
             createdBy: '-',
             createdAt: 0,
-          })),
-        )
-      }
-      const loadScenarios = async () => {
-        if (mode !== 'follow') { setScenarioRows([]); return }
-        const [scns, ids] = await Promise.all([
-          api.scenarios(pid).then((ss) => (Array.isArray(ss) ? ss : [])).catch(() => []),
-          api.myFollows(pid, 'SCENARIO').then((r) => r.entityIds || []).catch(() => [] as string[]),
-        ])
-        const idSet = new Set(ids)
-        setScenarioRows(
-          scns.filter((s) => idSet.has(s.id)).map((s) => ({
-            id: s.id,
-            displayId: s.num ? String(s.num) : shortId(s.id),
-            name: s.name,
-            priority: String(s.meta?.priority || s.meta?.level || 'P3'),
-            status: s.status || '-',
-            execResult: s.lastResult || 'none',
-            env: '-',
-            createdBy: s.createdBy || '-',
-            createdAt: s.createdAt ? new Date(s.createdAt).getTime() : 0,
-          })),
-        )
-      }
-      await Promise.all([loadPlans(), loadFuncCases(), loadReviews(), loadBugs(), loadApiCases(), loadScenarios()])
-    } finally {
-      setLoading(false)
+          })))
+        }
+        return rows
+      }, setApiCaseRows)
+      void run('apiScenario', async () => (await followedList('SCENARIO', api.scenarios)).map(s => ({
+        id: s.id,
+        displayId: s.num ? String(s.num) : shortId(s.id),
+        name: s.name,
+        priority: String(s.meta?.priority || s.meta?.level || 'P3'),
+        status: s.status || '-',
+        execResult: s.lastResult || 'none',
+        env: '-',
+        createdBy: s.createdBy || '-',
+        createdAt: s.createdAt ? new Date(s.createdAt).getTime() : 0,
+      })), setScenarioRows)
     }
-  }, [pid, mode])
 
-  useEffect(() => { void load() }, [load])
+    return () => { live = false }
+  }, [pid, mode, revision])
 
   if (!pid) return <SelectProjectEmpty />
 
@@ -644,7 +631,7 @@ export default function WorkbenchSections({ mode }: { mode: 'todo' | 'follow' })
           </Button>
         </Dropdown>
         <Tooltip title={t('home.wb.refresh', '刷新')}>
-          <Button icon={<ReloadOutlined />} onClick={() => void load()} />
+          <Button icon={<ReloadOutlined />} onClick={() => setRevision(value => value + 1)} />
         </Tooltip>
       </div>
 
@@ -654,7 +641,7 @@ export default function WorkbenchSections({ mode }: { mode: 'todo' | 'follow' })
           <Table
             rowKey="id"
             size="small"
-            loading={loading}
+            loading={pending.has('plan')}
             columns={planCols}
             dataSource={shownPlanRows}
             pagination={pager}
@@ -667,7 +654,7 @@ export default function WorkbenchSections({ mode }: { mode: 'todo' | 'follow' })
           <Table
             rowKey="id"
             size="small"
-            loading={loading}
+            loading={pending.has('funcCase')}
             columns={funcCols}
             dataSource={funcRows}
             pagination={pager}
@@ -680,7 +667,7 @@ export default function WorkbenchSections({ mode }: { mode: 'todo' | 'follow' })
           <Table
             rowKey="id"
             size="small"
-            loading={loading}
+            loading={pending.has('review')}
             columns={reviewCols}
             dataSource={reviews}
             pagination={pager}
@@ -693,7 +680,7 @@ export default function WorkbenchSections({ mode }: { mode: 'todo' | 'follow' })
           <Table
             rowKey="id"
             size="small"
-            loading={loading}
+            loading={pending.has('apiCase')}
             columns={apiCaseCols}
             dataSource={apiCaseRows}
             pagination={pager}
@@ -706,7 +693,7 @@ export default function WorkbenchSections({ mode }: { mode: 'todo' | 'follow' })
           <Table
             rowKey="id"
             size="small"
-            loading={loading}
+            loading={pending.has('apiScenario')}
             columns={scenarioCols}
             dataSource={scenarioRows}
             pagination={pager}
@@ -719,7 +706,7 @@ export default function WorkbenchSections({ mode }: { mode: 'todo' | 'follow' })
           <Table
             rowKey="id"
             size="small"
-            loading={loading}
+            loading={pending.has('bug')}
             columns={bugCols}
             dataSource={bugRows}
             pagination={pager}

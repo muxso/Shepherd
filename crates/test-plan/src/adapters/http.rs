@@ -455,35 +455,52 @@ async fn report_md(
 #[serde(rename_all = "camelCase")]
 struct PlanShareResponse {
     token: String,
+    expires_at: i64,
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct PlanShareBody {
+    expires_in_days: Option<i32>,
 }
 
 /// Create a public share link for a plan's report. Requires TEST_PLAN:READ; the returned token
 /// can then be read anonymously via `/public/test-plan-report/{token}`.
-#[utoipa::path(post, path = "/test-plan/{id}/report/share", tag = "test-plan", params(("id" = String, Path)), responses((status = 200, body = PlanShareResponse), (status = 403), (status = 404)), security(("bearer" = [])))]
+#[utoipa::path(post, path = "/test-plan/{id}/report/share", tag = "test-plan", params(("id" = String, Path)), request_body = PlanShareBody, responses((status = 200, body = PlanShareResponse), (status = 400), (status = 403), (status = 404)), security(("bearer" = [])))]
 async fn create_plan_share(
     user: AuthUser,
     State(st): State<PlanState>,
     Path(id): Path<String>,
+    body: Option<Json<PlanShareBody>>,
 ) -> Response {
     if !user.can("TEST_PLAN", "READ") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    let days = body.and_then(|body| body.0.expires_in_days).unwrap_or(7);
+    if !(1..=365).contains(&days) {
+        return (StatusCode::BAD_REQUEST, "Share validity must be between 1 and 365 days")
+            .into_response();
     }
     match build_plan_report_md(&st, &id).await {
         Ok(Some(_)) => {}
         Ok(None) => return (StatusCode::NOT_FOUND, "plan not found").into_response(),
         Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
     }
-    let token = sqlx::query_scalar::<_, String>(
-        "INSERT INTO ms_report_share (token, report_type, report_id, created_by, created_at) \
-         VALUES (gen_random_uuid()::text, 'plan', $1, $2, (extract(epoch from now())*1000)::bigint) \
-         RETURNING token",
+    let share = sqlx::query_as::<_, (String, i64)>(
+        "INSERT INTO ms_report_share (token, report_type, report_id, created_by, created_at, expires_at)
+         SELECT gen_random_uuid()::text, 'plan', $1, $2, ts, ts + $3
+         FROM (SELECT (extract(epoch from now()) * 1000)::bigint AS ts) clock
+         RETURNING token, expires_at",
     )
     .bind(&id)
     .bind(&user.user_id)
+    .bind(i64::from(days) * 86_400_000)
     .fetch_one(&st.pool)
     .await;
-    match token {
-        Ok(token) => (StatusCode::OK, Json(PlanShareResponse { token })).into_response(),
+    match share {
+        Ok((token, expires_at)) => {
+            (StatusCode::OK, Json(PlanShareResponse { token, expires_at })).into_response()
+        }
         Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
     }
 }
@@ -505,7 +522,8 @@ async fn public_plan_report(State(st): State<PlanState>, Path(token): Path<Strin
         return (StatusCode::NOT_FOUND, "share not found or expired").into_response();
     };
     match build_plan_report_md(&st, &plan_id).await {
-        Ok(Some(md)) => markdown_response(md),
+        Ok(Some(md)) => ([(axum::http::header::CACHE_CONTROL, "no-store")], markdown_response(md))
+            .into_response(),
         Ok(None) => (StatusCode::NOT_FOUND, "plan not found").into_response(),
         Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
     }
@@ -693,7 +711,7 @@ async fn list_cases(
 }
 
 #[derive(OpenApi)]
-#[openapi(paths(create_plan, list_plans, plan_detail, update_plan, save_planning, statistics, report, report_md, create_plan_share, public_plan_report, link_case, unlink_case, record_result, list_cases), components(schemas(CreatePlanRequest, PlanResponse, PlanListItemResponse, PlanDetailResponse, UpdatePlanRequest, SavePlanningResponse, StatisticsResponse, PlanShareResponse, LinkCaseRequest, RecordResultRequest, AssertionResultDto, PlanCaseResponse, StepResultDto)), tags((name = "test-plan", description = "Test plan")))]
+#[openapi(paths(create_plan, list_plans, plan_detail, update_plan, save_planning, statistics, report, report_md, create_plan_share, public_plan_report, link_case, unlink_case, record_result, list_cases), components(schemas(CreatePlanRequest, PlanResponse, PlanListItemResponse, PlanDetailResponse, UpdatePlanRequest, SavePlanningResponse, StatisticsResponse, PlanShareResponse, PlanShareBody, LinkCaseRequest, RecordResultRequest, AssertionResultDto, PlanCaseResponse, StepResultDto)), tags((name = "test-plan", description = "Test plan")))]
 struct ApiDoc;
 pub fn openapi() -> utoipa::openapi::OpenApi {
     ApiDoc::openapi()

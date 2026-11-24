@@ -16,9 +16,11 @@ const fontFamilyCode = "'JetBrains Mono', ui-monospace, SFMono-Regular, 'SF Mono
 const shared: ThemeConfig['token'] = {
   colorPrimary: BRAND,
   colorInfo: BRAND,
-  colorSuccess: '#00b42a',
+  colorSuccess: '#396d85',
+  green: '#396d85',
   colorWarning: '#ff7d00',
-  colorError: '#f53f3f',
+  colorError: '#a2574f',
+  red: '#a2574f',
   colorLink: BRAND,
   // Flat radii: 4px for buttons/inputs, 2px for small controls; large containers (cards/modals) configured separately.
   borderRadius: 4,
@@ -66,9 +68,11 @@ const darkBase: ThemeConfig = {
     colorPrimary: BRAND, // Adjusted by the selected user palette.
     colorInfo: BRAND,
     colorLink: BRAND,
-    colorSuccess: '#27c346',
+    colorSuccess: '#8ebbd1',
+    green: '#8ebbd1',
     colorWarning: '#ff9a2e',
-    colorError: '#f76965',
+    colorError: '#e2a295',
+    red: '#e2a295',
     colorBgLayout: 'transparent',
     colorBgContainer: '#1d1f25',
     colorBgElevated: '#24262e',

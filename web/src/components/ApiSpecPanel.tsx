@@ -9,6 +9,8 @@ import QueryParamTable from './QueryParamTable'
 import BodySchemaTree, { schemaToJson } from './BodySchemaTree'
 import ProcessorEditor from './ProcessorEditor'
 import AssertionEditor from './AssertionEditor'
+import ResponseJsonTree from './ResponseJsonTree'
+import type { SelectedResponseField } from './ResponseJsonPathPicker'
 import {
   api,
   ApiError,
@@ -24,28 +26,17 @@ import {
   type Environment,
 } from '../api'
 import { message } from '../feedback'
+import { copyToClipboard } from '../clipboard'
+import type { CurlRequest } from '../curl'
 import { useI18n } from '../i18n'
 import { LatencyStat, fmtDurationMs } from './TimingBreakdown'
 import { statusLabel } from './tags'
 
 const API_STATUSES = ['DRAFT', 'DEBUGGING', 'COMPLETED', 'DEPRECATED']
 
-/** Copy text to clipboard (with toast). navigator.clipboard may be missing in insecure contexts; falls back to execCommand. */
 async function copy(text: string, ok: string, fail = '复制失败') {
-  try {
-    if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(text)
-    else {
-      const ta = document.createElement('textarea')
-      ta.value = text
-      document.body.appendChild(ta)
-      ta.select()
-      document.execCommand('copy')
-      document.body.removeChild(ta)
-    }
-    message.success(ok)
-  } catch {
-    message.error(fail)
-  }
+  if (await copyToClipboard(text)) message.success(ok)
+  else message.error(fail)
 }
 
 const BODY_TYPES: ApiBodyType[] = ['none', 'form-data', 'x-www-form-urlencoded', 'json', 'xml', 'raw', 'binary']
@@ -64,33 +55,18 @@ export const emptySpec = (): ApiSpec => ({
   assertions: [],
 })
 
-/** Parse a cURL command (method / url / -H headers / -d body). Best-effort; returns null on failure. */
-export function parseCurl(text: string): { method: string; url: string; headers: ApiSpecKV[]; body: string } | null {
-  const raw = text.trim().replace(/\\\r?\n/g, ' ')
-  if (!/^curl\b/.test(raw)) return null
-  // Tokenize (single/double quotes supported).
-  const toks: string[] = []
-  const re = /"([^"]*)"|'([^']*)'|(\S+)/g
-  let m: RegExpExecArray | null
-  while ((m = re.exec(raw))) toks.push(m[1] ?? m[2] ?? m[3] ?? '')
-  let method = ''
-  let url = ''
-  const headers: ApiSpecKV[] = []
-  let body = ''
-  for (let i = 1; i < toks.length; i++) {
-    const tk = toks[i]
-    if (tk === '-X' || tk === '--request') method = (toks[++i] || '').toUpperCase()
-    else if (tk === '-H' || tk === '--header') {
-      const h = toks[++i] || ''
-      const idx = h.indexOf(':')
-      if (idx > 0) headers.push({ name: h.slice(0, idx).trim(), value: h.slice(idx + 1).trim(), desc: '' })
-    } else if (tk === '-d' || tk === '--data' || tk === '--data-raw' || tk === '--data-binary') body = toks[++i] || ''
-    else if (tk === '-u' || tk === '--user') headers.push({ name: 'Authorization', value: `Basic ${tk}`, desc: '' })
-    else if (!tk.startsWith('-') && !url) url = tk
+export function curlSpecPatch(spec: ApiSpec, parsed: CurlRequest): Partial<ApiSpec> {
+  const importedNames = new Set(parsed.headers.map(({ name }) => name.toLowerCase()))
+  const contentType = parsed.headers.find(({ name }) => name.toLowerCase() === 'content-type')?.value ?? ''
+  const bodyType = parsed.body === null ? 'none' : /[+/]json(?:;|$)/i.test(contentType) ? 'json' : /[+/]xml(?:;|$)/i.test(contentType) ? 'xml' : 'raw'
+  return {
+    requestHeaders: [
+      ...(spec.requestHeaders || []).filter((h) => h.name && !importedNames.has(h.name.toLowerCase())),
+      ...parsed.headers,
+    ],
+    requestBody: parsed.body ?? '',
+    bodyType,
   }
-  if (!url) return null
-  if (!method) method = body ? 'POST' : 'GET'
-  return { method, url, headers, body }
 }
 
 /**
@@ -103,7 +79,7 @@ export type SentRequest = { method: string; url: string; headers: { key: string;
 export interface ApiSpecPanelHandle {
   save: () => void
   /** cURL import: merge parsed headers/body into the current spec; the parent backfills request-line method/path. */
-  applyCurl: (parsed: { method: string; url: string; headers: ApiSpecKV[]; body: string }) => void
+  applyCurl: (parsed: CurlRequest) => void
   /** Execute (debug mode): server = via server-side proxy; local = direct from the browser. */
   execute: (mode?: ExecMode) => void
   /** Save as test case (debug-mode save): create a case from the current request + assertions/processors. */
@@ -267,7 +243,7 @@ const ApiSpecPanel = forwardRef<ApiSpecPanelHandle, {
       setResp(
         m === 'local'
           ? await localSend(req)
-          : await api.debugSend({ ...req, environmentId: env?.id, variables: env?.variables, preProcessors: spec.preProcessors, assertions: spec.assertions, processors: spec.postProcessors }),
+          : await api.debugSend({ ...req, projectId: definition?.projectId, environmentId: env?.id, variables: env?.variables, preProcessors: spec.preProcessors, assertions: spec.assertions, processors: spec.postProcessors }),
       )
     } catch (e) {
       setRunErr(e instanceof ApiError ? e.message : e instanceof Error ? e.message : t('editor.sendFail', '发送失败'))
@@ -315,11 +291,8 @@ const ApiSpecPanel = forwardRef<ApiSpecPanelHandle, {
     }
   }
 
-  const applyCurl = (parsed: { method: string; url: string; headers: ApiSpecKV[]; body: string }) => {
-    patch({
-      requestHeaders: [...(spec.requestHeaders || []).filter((h) => h.name), ...parsed.headers],
-      ...(parsed.body ? { requestBody: parsed.body, bodyType: 'json' as ApiBodyType } : {}),
-    })
+  const applyCurl = (parsed: CurlRequest) => {
+    patch(curlSpecPatch(spec, parsed))
   }
 
   // Expose save/execute/applyCurl/saveAsCase to the parent (triggered by the definition-page request-line buttons).
@@ -375,17 +348,17 @@ const ApiSpecPanel = forwardRef<ApiSpecPanelHandle, {
           {
             key: 'pre',
             label: t('apidef.preProcessors', '前置'),
-            children: <ProcessorEditor value={spec.preProcessors as Record<string, unknown>[] | undefined} onChange={(v) => patch({ preProcessors: v })} allowed={['wait', 'plugin']} />,
+            children: <ProcessorEditor environmentId={env?.id} value={spec.preProcessors as Record<string, unknown>[] | undefined} onChange={(v) => patch({ preProcessors: v })} allowed={['wait', 'plugin', 'sql', 'script', 'sandboxScript']} />,
           },
           {
             key: 'post',
             label: t('apidef.postProcessors', '后置'),
-            children: <ProcessorEditor value={spec.postProcessors as Record<string, unknown>[] | undefined} onChange={(v) => patch({ postProcessors: v })} allowed={['extract', 'script', 'sql', 'wait']} />,
+            children: <ProcessorEditor responseBody={resp?.body} value={spec.postProcessors as Record<string, unknown>[] | undefined} onChange={(v) => patch({ postProcessors: v })} allowed={['extract', 'wait']} />,
           },
           {
             key: 'assert',
             label: `${t('apidef.assertions', '断言')}${spec.assertions?.length ? ` (${spec.assertions.length})` : ''}`,
-            children: <AssertionEditor value={spec.assertions as Record<string, unknown>[] | undefined} onChange={(v) => patch({ assertions: v })} />,
+            children: <AssertionEditor responseBody={resp?.body} value={spec.assertions as Record<string, unknown>[] | undefined} onChange={(v) => patch({ assertions: v })} />,
           },
         ]
       : []),
@@ -528,12 +501,16 @@ export function DebugResultPanel({
   extractors,
   assertions,
   onRun,
+  onFieldAssertion,
+  onFieldExtraction,
 }: {
   running: boolean
   resp: DebugResponse | null
   err: string
   req: SentRequest | null
   isHttp: boolean
+  onFieldAssertion?: (field: SelectedResponseField) => void
+  onFieldExtraction?: (field: SelectedResponseField) => void
   extractors?: Record<string, unknown>[]
   assertions?: Record<string, unknown>[]
   /** Present = show a run-it call-to-action in the not-yet-executed placeholder. */
@@ -587,7 +564,9 @@ export function DebugResultPanel({
             <Radio.Button value="json">JSON</Radio.Button>
             <Radio.Button value="raw">Raw</Radio.Button>
           </Radio.Group>
-          <pre style={codeBox}>{view === 'json' ? formatJson(resp?.body || '') : resp?.body || t('editor.empty', '(空)')}</pre>
+          {view === 'json' && resp && onFieldAssertion && onFieldExtraction
+            ? <ResponseJsonTree body={resp.body} style={codeBox} onAssertion={onFieldAssertion} onExtraction={onFieldExtraction} />
+            : <pre style={codeBox}>{view === 'json' ? formatJson(resp?.body || '') : resp?.body || t('editor.empty', '(空)')}</pre>}
         </>
       ),
     },

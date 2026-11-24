@@ -1,0 +1,207 @@
+.sonar-dashboard {
+  padding: 16px;
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+  height: 100%;
+  overflow: auto;
+  box-sizing: border-box;
+  align-content: start;
+  background: var(--bg-base);
+  color: var(--text);
+}
+.sonar-dashboard-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-block: 2px; }
+.sonar-dashboard .ant-card {
+  min-width: 0;
+  border-color: var(--border-soft);
+  background: var(--panel);
+  box-shadow: none;
+}
+.sonar-dashboard .ant-card-head {
+  border-color: var(--border-soft);
+  color: var(--text);
+}
+.sonar-dashboard .ant-statistic-title { color: var(--text-2); }
+.sonar-dashboard .ant-statistic-content {
+  color: var(--text);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.sonar-dashboard .sonar-gate-kpi .ant-statistic-content { color: var(--success); }
+.sonar-dashboard .sonar-failed-kpi .ant-statistic-content { color: var(--error); }
+.sonar-dashboard .ant-table-wrapper .ant-table-thead > tr > th {
+  background: var(--panel-2);
+  color: var(--text-2);
+  border-color: var(--border-soft);
+}
+.sonar-dashboard h3.ant-typography { margin: 0; }
+.sonar-dashboard-filters, .sonar-commit-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--panel);
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+}
+.sonar-dashboard-filters .ant-select { min-width: 150px; }
+.sonar-dashboard-kpis {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+.sonar-dashboard-kpis .ant-card-body { min-height: 104px; }
+.sonar-analysis-split {
+  display: grid;
+  grid-template-columns: minmax(0, 2.5fr) minmax(232px, 1fr);
+}
+.sonar-analysis-chart { min-width: 0; padding: 8px 16px 0 0; }
+.sonar-analysis-side { min-width: 0; border-inline-start: 1px solid var(--border-soft); padding-inline-start: 16px; }
+.sonar-analysis-side h5.ant-typography { margin: 0 0 12px; }
+.sonar-repo-attention { border-block-start: 1px solid var(--border-soft); margin-block-start: 12px; padding-block-start: 10px; }
+.sonar-repo-attention ul { list-style: none; margin: 4px 0 0; padding: 0; }
+.sonar-repo-attention .ant-btn {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding-inline: 0;
+}
+.sonar-repo-status { display: grid; gap: 12px; }
+.sonar-repo-status > div > div:first-child { display: flex; justify-content: space-between; }
+@media (max-width: 800px) {
+  .sonar-dashboard { padding: 12px; }
+  .sonar-dashboard-header { flex-wrap: wrap; }
+  .sonar-dashboard-filters .ant-select, .sonar-commit-controls .ant-select { flex: 1 1 150px; max-width: 100%; }
+  .sonar-analysis-split { grid-template-columns: minmax(0, 1fr); }
+  .sonar-analysis-chart { padding-inline-end: 0; }
+  .sonar-analysis-side { border-inline-start: 0; border-block-start: 1px solid var(--border-soft); padding: 12px 0 0; }
+  .sonar-dashboard-kpis { grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); }
+}
+.sonar-commit-controls { background: var(--panel-2); margin-bottom: 12px; }
+.sonar-commit-header { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.sonar-commit-controls .ant-select { min-width: 150px; max-width: 100%; }
+.sonar-commit-header { justify-content: space-between; align-items: center; }
+.sonar-commit-header code { overflow-wrap: anywhere; }
+.sonar-commit-issues {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(155px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.sonar-commit-issues > div { background: var(--panel-2); border: 1px solid var(--border-soft); padding: 10px; border-radius: 6px; }
+.sonar-commit-issue-caption { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px; }
+.sonar-evidence-drawer .ant-drawer-content,
+.sonar-evidence-drawer .ant-drawer-header {
+  background: var(--panel);
+  border-color: var(--border-soft);
+}
+.sonar-evidence-drawer .ant-drawer-body { background: var(--bg-base); padding: 16px; }
+.sonar-evidence-title { display: grid; gap: 3px; min-width: 0; }
+.sonar-evidence-subtitle { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; color: var(--text-2); font-size: 12px; font-weight: 400; overflow-wrap: anywhere; }
+.sonar-evidence-commit-summary, .sonar-diff-files, .sonar-inline-file, .sonar-issue-list > li {
+  background: var(--panel);
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+}
+.sonar-evidence-commit-summary { padding: 12px 14px; margin-bottom: 12px; }
+.sonar-evidence-commit-summary h5.ant-typography { margin: 0 0 4px; overflow-wrap: anywhere; }
+.sonar-evidence-drawer .ant-alert { margin-block-end: 12px; }
+.sonar-evidence-section-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.sonar-diff-layout { display: grid; align-items: start; grid-template-columns: minmax(190px, 235px) minmax(0, 1fr); gap: 12px; }
+.sonar-diff-files { padding: 10px; position: sticky; top: 0; }
+.sonar-diff-files ul { padding: 0; margin: 8px 0 0; list-style: none; max-height: min(60vh, 520px); overflow: auto; }
+.sonar-diff-files button {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: start;
+  width: 100%;
+  text-align: start;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-2);
+  padding: 6px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+}
+.sonar-diff-files button > span:nth-child(2) { overflow-wrap: anywhere; }
+.sonar-diff-files button:hover { background: var(--panel-2); color: var(--text); }
+.sonar-diff-files button[aria-current="true"] { background: var(--brand-soft); color: var(--text); font-weight: 600; }
+.sonar-diff-files button:focus-visible { outline: 2px solid var(--brand); outline-offset: -2px; }
+.sonar-file-empty { padding: 8px 4px; color: var(--text-3); font-size: 12px; }
+.sonar-inline-file { min-width: 0; overflow: hidden; }
+.sonar-inline-file-heading, .sonar-diff-summary { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 9px 12px; }
+.sonar-inline-file-heading { border-bottom: 1px solid var(--border-soft); }
+.sonar-inline-file-heading code { overflow-wrap: anywhere; }
+.sonar-diff-summary { font-variant-numeric: tabular-nums; font-size: 12px; }
+.sonar-diff-summary > span { display: inline-flex; gap: 8px; font-weight: 600; }
+.sonar-line-count-added, .sonar-file-status.is-added.ant-tag { color: var(--success); }
+.sonar-line-count-removed, .sonar-file-status.is-removed.ant-tag { color: var(--error); }
+.sonar-inline-diff { overflow-x: auto; border-top: 1px solid var(--border-soft); color: var(--text); font-size: 12px; }
+.sonar-diff-columns, .sonar-diff-line { display: grid; grid-template-columns: 48px 48px 16px minmax(0, 1fr); line-height: 1.6; }
+.sonar-diff-columns { background: var(--panel-2); color: var(--text-2); }
+.sonar-diff-columns > span:first-child, .sonar-diff-columns > span:nth-child(2),
+.sonar-diff-line > span { text-align: end; padding-inline-end: 6px; color: var(--text-3); font-variant-numeric: tabular-nums; user-select: none; }
+.sonar-diff-line > span:nth-child(3) { text-align: center; padding: 0; }
+.sonar-diff-line > code { padding: 0 8px; white-space: pre; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
+.sonar-diff-lines { width: max-content; min-width: 100%; }
+.sonar-diff-line.hunk > code, .sonar-diff-line.metadata > code { grid-column: 1 / -1; }
+.sonar-diff-line.hunk { background: var(--brand-soft); color: var(--text-2); }
+.sonar-diff-line.metadata { color: var(--text-3); }
+.sonar-diff-line.added { background: color-mix(in srgb, var(--success) 10%, transparent); }
+.sonar-diff-line.removed { background: color-mix(in srgb, var(--error) 10%, transparent); }
+.sonar-diff-line.added > span:nth-child(3) { color: var(--success); }
+.sonar-diff-line.removed > span:nth-child(3) { color: var(--error); }
+.sonar-issue-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.sonar-issue-list > li { padding: 10px 12px; min-width: 0; }
+.sonar-issue-heading { display: flex; justify-content: space-between; align-items: start; gap: 10px; color: var(--text); }
+.sonar-issue-heading strong { font-weight: 600; overflow-wrap: anywhere; }
+.sonar-issue-heading .ant-tag { margin: 0; }
+.sonar-issue-severity.is-high.ant-tag { color: var(--error); border-color: transparent; background: color-mix(in srgb, var(--error) 10%, transparent); }
+.sonar-issue-severity.is-medium.ant-tag { color: var(--warning); border-color: transparent; background: color-mix(in srgb, var(--warning) 10%, transparent); }
+.sonar-issue-location { display: flex; align-items: start; gap: 6px; margin-block: 5px; color: var(--text-2); font-size: 12px; overflow-wrap: anywhere; }
+.sonar-issue-location .anticon { margin-block-start: 3px; }
+.sonar-issue-meta { display: flex; flex-wrap: wrap; gap: 12px; color: var(--text-3); font-size: 12px; }
+.sonar-issue-pagination { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 8px; margin-block-start: 12px; }
+@media (max-width: 650px) {
+  .sonar-evidence-drawer .ant-drawer-body { padding: 10px; }
+  .sonar-diff-layout { grid-template-columns: minmax(0, 1fr); }
+  .sonar-diff-files { position: static; }
+  .sonar-diff-files ul { max-height: 145px; }
+}
+
+.sonar-issue-category {
+  margin-block-end: 12px;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.sonar-trend-note.ant-typography { margin-block-end: 8px; }
+.sonar-trend-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(125px, 1fr));
+  gap: 8px;
+  margin-block-end: 12px;
+}
+.sonar-trend-metrics button {
+  display: grid;
+  gap: 4px;
+  text-align: start;
+  padding: 8px 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--panel-2);
+  color: var(--text-2);
+  font: inherit;
+  cursor: pointer;
+}
+.sonar-trend-metrics button[aria-pressed="true"] {
+  background: var(--brand-soft);
+  border-color: var(--brand);
+}
+.sonar-trend-metrics button:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+.sonar-trend-metrics strong { color: var(--text); font-size: 20px; font-variant-numeric: tabular-nums; }

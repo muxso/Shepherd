@@ -2,21 +2,28 @@
 // Width: max(measured container width, rows × min group width) — few groups fill the
 // container; many groups render at natural width and scroll horizontally instead of squeezing.
 // Hover: instant highlight (others dim) + custom tooltip, avoiding the native title delay.
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 
 export interface BarSeries {
   key: string
   label: string
   color: string
+  gradientEnd?: string
 }
 export interface BarRow {
   name: string
   values: Record<string, number>
 }
 
+function swatch(series: BarSeries) {
+  return series.gradientEnd ? `linear-gradient(180deg, ${series.color}, ${series.gradientEnd})` : series.color
+}
+
 const MIN_GROUP_W = 72 // min group width (px); drives horizontal scroll when groups are many
 
-export default function GroupedBars({ series, rows, height = 260 }: { series: BarSeries[]; rows: BarRow[]; height?: number }) {
+export default function GroupedBars({ series, rows, height = 260, maxValue, formatValue = String }: { series: BarSeries[]; rows: BarRow[]; height?: number; maxValue?: number; formatValue?: (value: number) => string }) {
+  const chartId = useId()
+  const gradientId = (index: number) => `${chartId}-bar-gradient-${index}`
   const wrapRef = useRef<HTMLDivElement>(null)
   const [cw, setCw] = useState(800)
   // Hovered bar: row/series indices + bar-top coords (svg space, used to position the tooltip inside the scroll container).
@@ -32,8 +39,11 @@ export default function GroupedBars({ series, rows, height = 260 }: { series: Ba
     return () => ro.disconnect()
   }, [])
 
+  const rawMax = Math.max(1, ...rows.flatMap((r) => series.map((s) => r.values[s.key] ?? 0)))
+  const niceMax = Math.max(maxValue ?? 0, maxValue == null || rawMax > maxValue ? niceCeil(rawMax) : 0)
+  const ticks = [0, 0.25, 0.5, 0.75, 1].map((f) => Math.round(niceMax * f))
   const H = height
-  const padL = 44
+  const padL = Math.max(44, 10 + Math.max(...ticks.map(tick => formatValue(tick).length)) * 7)
   const padR = 12
   const padT = 12
   const padB = 40
@@ -44,10 +54,7 @@ export default function GroupedBars({ series, rows, height = 260 }: { series: Ba
   const plotH = H - padT - padB
 
   // y-axis upper bound: a nice value that divides evenly into 4 ticks.
-  const rawMax = Math.max(1, ...rows.flatMap((r) => series.map((s) => r.values[s.key] ?? 0)))
-  const niceMax = niceCeil(rawMax)
   const yOf = (v: number) => padT + plotH - (v / niceMax) * plotH
-  const ticks = [0, 0.25, 0.5, 0.75, 1].map((f) => Math.round(niceMax * f))
 
   const groupW = plotW / Math.max(1, rows.length)
   const barGap = 4
@@ -59,18 +66,26 @@ export default function GroupedBars({ series, rows, height = 260 }: { series: Ba
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, marginBottom: 8 }}>
         {series.map((s) => (
           <span key={s.key} style={{ display: 'inline-flex', alignItems: 'center', fontSize: 12, color: 'var(--text-2)' }}>
-            <span style={{ width: 10, height: 10, borderRadius: 2, background: s.color, marginRight: 6 }} />
+            <span style={{ width: 10, height: 10, borderRadius: 2, background: swatch(s), marginRight: 6 }} />
             {s.label}
           </span>
         ))}
       </div>
       <div ref={wrapRef} style={{ overflowX: 'auto', overflowY: 'hidden', position: 'relative' }}>
         <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} style={{ display: 'block' }}>
+          <defs>
+            {series.map((s, index) => s.gradientEnd && (
+              <linearGradient key={s.key} id={gradientId(index)} x2="0%" y2="100%">
+                <stop stopColor={s.color} />
+                <stop offset="100%" stopColor={s.gradientEnd} />
+              </linearGradient>
+            ))}
+          </defs>
           {/* Grid + y-axis ticks */}
           {ticks.map((tk, i) => (
             <g key={i}>
               <line x1={padL} y1={yOf(tk)} x2={W - padR} y2={yOf(tk)} stroke="var(--border-soft)" />
-              <text x={padL - 8} y={yOf(tk) + 4} textAnchor="end" fontSize="11" fill="#a8adb5">{tk}</text>
+              <text x={padL - 8} y={yOf(tk) + 4} textAnchor="end" fontSize="11" fill="var(--text-2)">{formatValue(tk)}</text>
             </g>
           ))}
           {rows.map((row, ri) => {
@@ -80,7 +95,8 @@ export default function GroupedBars({ series, rows, height = 260 }: { series: Ba
             return (
               <g key={ri}>
                 {series.map((s, si) => {
-                  const v = row.values[s.key] ?? 0
+                  const v = row.values[s.key]
+                  if (v == null) return null
                   const x = startX + si * (barW + barGap)
                   const y = yOf(v)
                   const h = padT + plotH - y
@@ -88,22 +104,23 @@ export default function GroupedBars({ series, rows, height = 260 }: { series: Ba
                   return (
                     <g key={s.key}>
                       <rect
+                        className="ms-summary-chart-bar"
                         x={x}
                         y={y}
                         width={barW}
                         height={Math.max(0, h)}
-                        fill={s.color}
+                        fill={s.gradientEnd ? `url(#${gradientId(si)})` : s.color}
                         rx={2}
                         opacity={hover == null || active ? 1 : 0.35}
                         style={{ transition: 'opacity 0.12s', cursor: 'default' }}
                         onMouseEnter={() => setHover({ ri, si, x: x + barW / 2, y })}
                         onMouseLeave={() => setHover(null)}
                       />
-                      {v > 0 && <text x={x + barW / 2} y={y - 3} textAnchor="middle" fontSize="10" fill="#8a9099" style={{ pointerEvents: 'none' }}>{v}</text>}
+                      {(v > 0 || formatValue !== String) && <text x={x + barW / 2} y={y - 3} textAnchor="middle" fontSize="10" fill="var(--text-2)" style={{ pointerEvents: 'none' }}>{formatValue(v)}</text>}
                     </g>
                   )
                 })}
-                <text x={gx + groupW / 2} y={H - padB + 18} textAnchor="middle" fontSize="12" fill="#5b6470">{truncate(row.name, 10)}</text>
+                <text x={gx + groupW / 2} y={H - padB + 18} textAnchor="middle" fontSize="12" fill="var(--text-2)">{truncate(row.name, 10)}</text>
               </g>
             )
           })}
@@ -129,9 +146,9 @@ export default function GroupedBars({ series, rows, height = 260 }: { series: Ba
           >
             <div style={{ color: 'var(--text-2)', marginBottom: 2 }}>{rows[hover.ri]?.name}</div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <span style={{ width: 8, height: 8, borderRadius: 2, background: series[hover.si]?.color }} />
+              <span style={{ width: 8, height: 8, borderRadius: 2, background: swatch(series[hover.si]) }} />
               <span style={{ color: 'var(--text)' }}>{series[hover.si]?.label}</span>
-              <b style={{ color: 'var(--text)' }}>{rows[hover.ri]?.values[series[hover.si]?.key ?? ''] ?? 0}</b>
+              <b style={{ color: 'var(--text)' }}>{formatValue(rows[hover.ri]?.values[series[hover.si]?.key ?? ''] ?? 0)}</b>
             </div>
           </div>
         )}

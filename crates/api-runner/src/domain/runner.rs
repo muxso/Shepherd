@@ -519,6 +519,7 @@ impl Extractor {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "args")]
 pub enum Processor {
+    UnsupportedPostProcessing,
     /// Generic reference: provider configuration lives in the plugin database.
     Plugin {
         #[serde(rename = "profileId")]
@@ -535,12 +536,25 @@ pub enum Processor {
         lang: String,
         code: String,
     },
+    SandboxScript {
+        #[serde(flatten)]
+        source: ScriptSource,
+        input: serde_json::Value,
+        output: String,
+    },
     /// Legacy datasource reference; the environment plugin resolves this as a scoped profile id.
     Sql {
         name: String,
         datasource: String,
         sql: String,
     },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "mode", rename_all = "camelCase", rename_all_fields = "camelCase")]
+pub enum ScriptSource {
+    Custom { language: String, code: String },
+    Shared { script_id: String, revision: i32 },
 }
 
 pub fn wait_millis(processors: &[Processor]) -> u64 {

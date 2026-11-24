@@ -65,6 +65,14 @@ impl OidcLoginUseCase {
     }
 
     pub async fn complete(&self, provider: &str, code: &str) -> Result<String, OidcError> {
+        self.complete_with_actor(provider, code).await.map(|(token, _)| token)
+    }
+
+    pub async fn complete_with_actor(
+        &self,
+        provider: &str,
+        code: &str,
+    ) -> Result<(String, String), OidcError> {
         let p = self
             .provider(provider)?
             .ok_or_else(|| OidcError::UnknownProvider(provider.to_string()))?;
@@ -72,10 +80,12 @@ impl OidcLoginUseCase {
         let linked = self.users.find_or_provision(&identity).await?;
         let permissions = PermissionSet::from_raw(&linked.permissions)
             .map_err(|_| OidcError::Backend("invalid permission config".into()))?;
-        self.sessions
+        let token = self
+            .sessions
             .create(&linked.user_id, permissions, self.ttl_secs)
             .await
-            .map_err(|e| OidcError::Backend(e.to_string()))
+            .map_err(|e| OidcError::Backend(e.to_string()))?;
+        Ok((token, linked.user_id))
     }
 
     /// Reads a provider out of the registry without holding the read lock

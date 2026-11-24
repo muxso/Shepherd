@@ -7,6 +7,9 @@ pub use in_memory::{
 #[cfg(feature = "pg")]
 pub mod pg;
 
+#[cfg(feature = "pg")]
+pub mod report_address;
+
 #[cfg(feature = "http")]
 pub mod http;
 

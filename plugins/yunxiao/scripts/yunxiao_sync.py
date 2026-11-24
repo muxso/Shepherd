@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 import sys
 import threading
+import time
 import urllib.error
 import urllib.request
 
@@ -34,19 +35,33 @@ def request(method, path, body=None):
     req = urllib.request.Request(os.environ['SHEPHERD_URL'].rstrip('/') + path, data=raw, method=method,
         headers={'Authorization': 'Bearer ' + os.environ['SHEPHERD_SYNC_KEY'], 'Content-Type': 'application/json'})
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-    try:
-        with opener.open(req, timeout=600 if path.endswith("/complete") else 120) as r:
-            return json.load(r)
-    except urllib.error.HTTPError as e:
-        # Do not log keys or source payloads.
-        raise RuntimeError(f'Shepherd HTTP {e.code} on {method} {path}: {e.read(250).decode(errors="replace")}') from None
+    for attempt in range(13):
+        try:
+            with opener.open(req, timeout=600 if path.endswith("/complete") else 120) as r:
+                return json.load(r)
+        except urllib.error.HTTPError as e:
+            # Do not log keys or source payloads.
+            raise RuntimeError(f'Shepherd HTTP {e.code} on {method} {path}: {e.read(250).decode(errors="replace")}') from None
+        except urllib.error.URLError as e:
+            if not isinstance(e.reason, ConnectionRefusedError) or attempt == 12:
+                raise
+            if attempt == 0:
+                print('Waiting for Shepherd after a refused connection', flush=True)
+            time.sleep(10)
 
 def batches(records, max_bytes=1_400_000):
     batch = []; size = 20
     for r in records:
         n = len(json.dumps(r, ensure_ascii=False).encode()) + 2
-        if n > max_bytes:
-            raise ValueError('source record exceeds ingest batch size')
+        if n + 20 > max_bytes:
+            data = r.get('data', {})
+            raw = data.get('raw') if isinstance(data, dict) else None
+            if isinstance(raw, dict) and 'description' in raw and raw['description'] == data.get('description'):
+                raw = {key: value for key, value in raw.items() if key != 'description'}
+                r = {**r, 'data': {**data, 'raw': raw}}
+                n = len(json.dumps(r, ensure_ascii=False).encode()) + 2
+            if n + 20 > max_bytes:
+                raise ValueError(f'{r.get("kind", "source")} record exceeds ingest batch size after deduplication ({n} bytes)')
         if batch and (len(batch) >= 100 or size + n > max_bytes):
             yield batch; batch = []; size = 20
         batch.append(r); size += n
@@ -104,6 +119,7 @@ def collect(collector, groups, days):
     with concurrent.futures.ThreadPoolExecutor(max_workers=3) as ex:
         fs = [ex.submit(collector.workitems,c,'Req'), ex.submit(collector.workitems,c,'Bug'), ex.submit(collector.sprints,c)]
         items, bugs, sprints = [f.result() for f in fs]
+    print(f'Collected {len(items)} requirements, {len(bugs)} bugs, and {len(sprints)} sprints', flush=True)
     items = enrich_requirements(items, collector)
     bugs = enrich_bug_history(enrich_bug_relations(bugs, items, collector), collector)
     repo_ids = [x.strip() for x in os.environ.get('SHEPHERD_TEST_REPO_IDS','').split(',') if x.strip()]
@@ -118,6 +134,7 @@ def collect(collector, groups, days):
         records.append({'kind':'sprint','externalId':sid,'data':{'title':sprint.get('name') or '', 'status':str(sprint.get('status') or ''), 'startAt':(collector.dateval(sprint.get('startDate')).isoformat() if collector.dateval(sprint.get('startDate')) else ''), 'endAt':(collector.dateval(sprint.get('endDate')).isoformat() if collector.dateval(sprint.get('endDate')) else ''), 'raw':sprint}})
     until = dt.datetime.now(collector.TZ).replace(second=0,microsecond=0)
     since = until-dt.timedelta(days=days)
+    print(f'Collected {len(testcases)} test cases; scanning Codeup from {since.date()}', flush=True)
     records.extend(collect_code(collector,groups,since,until,items,bugs,sprints))
     records.extend(testcases)
     unique = deduplicate(records)
@@ -191,6 +208,7 @@ def main():
         counts=dict.fromkeys(KINDS,0)
         if os.environ.get("SHEPHERD_TEST_REPO_IDS"): counts["testcase"]=0
         for r in records: counts[r['kind']]+=1
+        print(f'Staging {len(records)} records in Shepherd', flush=True)
         for batch in batches(records):request('PUT',f'/api/devops/runs/{run}/records',{'records':batch})
         result=request('POST',f'/api/devops/runs/{run}/complete',{'counts':counts,'codeSince':since,'codeUntil':until})
         print(json.dumps(result,ensure_ascii=False),flush=True)

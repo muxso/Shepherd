@@ -81,6 +81,19 @@ pub trait ApiDefinitionRepository: Send + Sync {
         limit: u32,
     ) -> Result<Vec<ApiCase>, RepoError>;
 
+    async fn cases_by_ids(
+        &self,
+        project_id: &str,
+        ids: &[String],
+    ) -> Result<Vec<ApiCase>, RepoError> {
+        Ok(self
+            .list_cases_by_project(project_id, 0, u32::MAX)
+            .await?
+            .into_iter()
+            .filter(|case| ids.contains(&case.id))
+            .collect())
+    }
+
     async fn insert_mock(&self, m: &NewApiMock) -> Result<ApiMock, RepoError>;
 
     async fn list_mocks(&self, api_definition_id: &str) -> Result<Vec<ApiMock>, RepoError>;

@@ -272,16 +272,133 @@ impl ExecutionResolver {
         variables: BTreeMap<String, String>,
         processors: &[api_runner::Processor],
     ) -> Result<api_runner::PreparedVariables, Response> {
-        self.prepare_inner(user, environment, variables, processors)
+        self.prepare_inner(user, environment, None, variables, processors, false)
             .await
             .map_err(IntoResponse::into_response)
     }
+    pub async fn prepare_request_project(
+        &self,
+        user: AuthUser,
+        project: &str,
+        environment: Option<&str>,
+        variables: BTreeMap<String, String>,
+        processors: &[api_runner::Processor],
+    ) -> Result<api_runner::PreparedVariables, Response> {
+        self.prepare_inner(user, environment, Some(project), variables, processors, false)
+            .await
+            .map_err(IntoResponse::into_response)
+    }
+
+    pub async fn prepare_scenario_step(
+        &self,
+        user: AuthUser,
+        project: &str,
+        environment: &str,
+        variables: BTreeMap<String, String>,
+        processors: &[api_runner::Processor],
+    ) -> Result<api_runner::PreparedVariables, Response> {
+        self.prepare_inner(user, Some(environment), Some(project), variables, processors, true)
+            .await
+            .map_err(IntoResponse::into_response)
+    }
+
     async fn prepare_inner(
         &self,
         user: AuthUser,
         environment: Option<&str>,
+        project: Option<&str>,
         variables: BTreeMap<String, String>,
         processors: &[api_runner::Processor],
+        scenario_step: bool,
+    ) -> Result<api_runner::PreparedVariables, ApiError> {
+        if processors
+            .iter()
+            .any(|processor| matches!(processor, api_runner::Processor::SandboxScript { .. }))
+        {
+            let project = project.ok_or_else(|| {
+                PluginError::InvalidConfig("select a project for script execution".into())
+            })?;
+            if let Some(environment) = environment {
+                let (scope, _) =
+                    authorize_environment(&self.host, user.clone(), environment, Access::Execute)
+                        .await?;
+                if scope.project_id != project {
+                    return Err(PluginError::PermissionDenied.into());
+                }
+            }
+            let first_script = processors
+                .iter()
+                .position(|processor| {
+                    matches!(processor, api_runner::Processor::SandboxScript { .. })
+                })
+                .unwrap_or(0);
+            if processors[first_script..]
+                .iter()
+                .any(|processor| !matches!(processor, api_runner::Processor::SandboxScript { .. }))
+            {
+                return Err(PluginError::InvalidConfig(
+                    "place sandbox scripts after environment preparation operations".into(),
+                )
+                .into());
+            }
+            let native = &processors[..first_script];
+            let mut result = if native.is_empty() {
+                api_runner::PreparedVariables { variables, steps: Vec::new() }
+            } else {
+                self.prepare_native(
+                    user.clone(),
+                    environment,
+                    Some(project),
+                    variables,
+                    native,
+                    false,
+                )
+                .await?
+            };
+            for processor in &processors[first_script..] {
+                let started = std::time::Instant::now();
+                crate::project_scripts::run_processor(
+                    &self.host,
+                    &user,
+                    project,
+                    processor,
+                    &mut result.variables,
+                )
+                .await
+                .map_err(|status| match status {
+                    StatusCode::FORBIDDEN | StatusCode::NOT_FOUND => PluginError::PermissionDenied,
+                    _ => {
+                        PluginError::Execution(format!("script failed (HTTP {})", status.as_u16()))
+                    }
+                })?;
+                if let api_runner::Processor::SandboxScript { source, output, .. } = processor {
+                    let source = match source {
+                        api_runner::ScriptSource::Custom { language, .. } => language.clone(),
+                        api_runner::ScriptSource::Shared { script_id, revision } => {
+                            format!("{script_id}@{revision}")
+                        }
+                    };
+                    result.steps.push(api_runner::PreparationStepReport {
+                        source,
+                        kind: "script".into(),
+                        elapsed_ms: started.elapsed().as_millis() as u64,
+                        variable_names: vec![output.clone()],
+                    });
+                }
+            }
+            return Ok(result);
+        }
+        self.prepare_native(user, environment, project, variables, processors, scenario_step).await
+    }
+
+    async fn prepare_native(
+        &self,
+        user: AuthUser,
+        environment: Option<&str>,
+        project: Option<&str>,
+        variables: BTreeMap<String, String>,
+        processors: &[api_runner::Processor],
+        scenario_step: bool,
     ) -> Result<api_runner::PreparedVariables, ApiError> {
         let Some(runtime) = &self.runtime else {
             if !processors.is_empty() {
@@ -302,6 +419,9 @@ impl ExecutionResolver {
         };
         let (scope, policy) =
             authorize_environment(&self.host, user, environment, Access::Execute).await?;
+        if project.is_some_and(|project| scope.project_id != project) {
+            return Err(PluginError::PermissionDenied.into());
+        }
         let context = ExecutionContext {
             scope,
             limits: ExecutionLimits::default(),
@@ -309,13 +429,16 @@ impl ExecutionResolver {
             authorization: policy,
             cancellation: Arc::new(CancellationToken::default()),
         };
-        Ok(environment_plugins::preparation::Preparation {
+        let preparation = environment_plugins::preparation::Preparation {
             store: &runtime.store,
             registry: &runtime.registry,
             context: &context,
+        };
+        if scenario_step {
+            Ok(preparation.run_scenario_step(variables, processors).await?)
+        } else {
+            Ok(preparation.run(variables, processors).await?)
         }
-        .run(variables, processors)
-        .await?)
     }
     async fn resolve_hosts(
         &self,

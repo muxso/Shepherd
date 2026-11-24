@@ -87,6 +87,40 @@ pub trait CaseRepository: Send + Sync {
 
     async fn list_by_project(&self, project_id: &str) -> Result<Vec<FunctionalCase>, RepoError>;
 
+    async fn list_options(
+        &self,
+        project_id: &str,
+    ) -> Result<Vec<(String, String, String)>, RepoError> {
+        Ok(self
+            .list_by_project(project_id)
+            .await?
+            .into_iter()
+            .map(|case| (case.id, case.name, case.module))
+            .collect())
+    }
+
+    async fn list_summaries(
+        &self,
+        project_id: &str,
+        limit: Option<i64>,
+    ) -> Result<Vec<(FunctionalCase, i32)>, RepoError> {
+        Ok(self
+            .list_by_project(project_id)
+            .await?
+            .into_iter()
+            .take(limit.unwrap_or(i64::MAX) as usize)
+            .map(|mut case| {
+                let count = case.steps.len() as i32;
+                case.steps.clear();
+                (case, count)
+            })
+            .collect())
+    }
+
+    async fn count_by_project(&self, project_id: &str) -> Result<i64, RepoError> {
+        Ok(self.list_by_project(project_id).await?.len() as i64)
+    }
+
     async fn get(&self, id: &str) -> Result<Option<FunctionalCase>, RepoError>;
 
     async fn link_requirement_case(

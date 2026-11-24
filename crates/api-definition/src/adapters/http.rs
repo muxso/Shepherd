@@ -75,6 +75,7 @@ pub fn router(repo: Arc<dyn ApiDefinitionRepository>, sessions: Arc<dyn SessionS
         .route("/api/definition/{id}/status", put(update_definition_status))
         .route("/api/definition/{id}/case", post(create_case).get(list_cases))
         .route("/api/case", post(create_standalone_case).get(list_project_cases))
+        .route("/api/case/references", axum::routing::get(referenced_cases))
         .route("/api/case/{id}", put(update_case).delete(delete_case))
         .route("/api/definition/{id}/mock", post(create_mock).get(list_mocks))
         .route("/api/mock", axum::routing::get(list_project_mocks))
@@ -709,6 +710,34 @@ async fn create_standalone_case(
         Err(CreateApiCaseError::Repo(_)) => {
             (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response()
         }
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CaseReferences {
+    project_id: String,
+    ids: String,
+}
+
+async fn referenced_cases(
+    user: AuthUser,
+    State(st): State<ApiDefinitionState>,
+    Query(query): Query<CaseReferences>,
+) -> Response {
+    if !user.can("API_DEFINITION", "READ") {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    let ids: Vec<String> =
+        query.ids.split(',').filter(|id| !id.is_empty()).map(str::to_owned).collect();
+    if ids.len() > 100 || ids.iter().any(|id| id.len() > 64) {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    match st.repo.cases_by_ids(&query.project_id, &ids).await {
+        Ok(cases) => {
+            Json(cases.into_iter().map(ApiCaseResponse::from).collect::<Vec<_>>()).into_response()
+        }
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
 }
 

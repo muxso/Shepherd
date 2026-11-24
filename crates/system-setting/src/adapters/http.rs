@@ -112,7 +112,13 @@ async fn login_handler(State(st): State<AppState>, Json(req): Json<LoginRequest>
     match st.login.execute(&req.username, &req.password).await {
         Ok(token) => {
             let user_id = st.sessions.get(&token).await.ok().flatten().map(|s| s.user_id);
-            (StatusCode::OK, Json(LoginResponse { token, user_id })).into_response()
+            let actor = user_id.clone().map(webauth::AuthenticatedActor);
+            let mut response =
+                (StatusCode::OK, Json(LoginResponse { token, user_id })).into_response();
+            if let Some(actor) = actor {
+                response.extensions_mut().insert(actor);
+            }
+            response
         }
         Err(AuthError::InvalidCredentials) => {
             (StatusCode::UNAUTHORIZED, "invalid credentials").into_response()
@@ -542,8 +548,13 @@ async fn oidc_callback(
     {
         return (StatusCode::BAD_REQUEST, "invalid or missing state").into_response();
     }
-    let mut resp = match uc.complete(&provider, &q.code).await {
-        Ok(token) => (StatusCode::OK, Json(LoginResponse { token, user_id: None })).into_response(),
+    let mut resp = match uc.complete_with_actor(&provider, &q.code).await {
+        Ok((token, actor)) => {
+            let mut response =
+                (StatusCode::OK, Json(LoginResponse { token, user_id: None })).into_response();
+            response.extensions_mut().insert(webauth::AuthenticatedActor(actor));
+            response
+        }
         Err(OidcError::UnknownProvider(_)) => {
             (StatusCode::NOT_FOUND, "unknown provider").into_response()
         }

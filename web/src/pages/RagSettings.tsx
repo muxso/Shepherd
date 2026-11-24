@@ -112,14 +112,6 @@ export default function RagSettings({ embedded }: { embedded?: boolean } = {}) {
           </Button>
         </Space>
       </div>
-      {(!embedKeySet || !chatKeySet) && (
-        <Alert
-          type="warning"
-          showIcon
-          style={{ marginBottom: 12 }}
-          message={t('rag.notSet', '尚未完成配置:知识问答、AI 评审需要 Embedding 与生成模型的接口地址和 API Key。未配置时可按关键词入库,但语义检索与问答不可用。')}
-        />
-      )}
       {testResult && (
         <Alert
           type={testResult.embed.ok && testResult.chat.ok ? 'success' : 'error'}
@@ -134,15 +126,6 @@ export default function RagSettings({ embedded }: { embedded?: boolean } = {}) {
           }
         />
       )}
-      <Alert
-        type="info"
-        showIcon
-        style={{ marginBottom: 20 }}
-        message={t(
-          'rag.hint',
-          '用于知识问答(聊天)与需求 AI 评审的检索/生成模型。留空 API Key 表示沿用已保存的密钥,保存后即时生效。',
-        )}
-      />
       <Form form={form} layout="vertical" requiredMark={false}>
         <Row gutter={16}>
           {/* Left: embedding — turns text into vectors. */}
@@ -173,9 +156,8 @@ export default function RagSettings({ embedded }: { embedded?: boolean } = {}) {
               <Form.Item
                 name="embedKey"
                 label={t('rag.embedKey', '嵌入 API Key')}
-                extra={embedKeySet ? t('rag.keySet', '已设置(留空保持不变)') : t('rag.keyUnset', '尚未设置')}
               >
-                <Input.Password placeholder={embedKeySet ? '••••••••' : 'sk-...'} autoComplete="new-password" />
+                <Input.Password placeholder={embedKeySet ? t('rag.keySet', '已设置，留空保留') : 'sk-...'} autoComplete="new-password" />
               </Form.Item>
             </Card>
           </Col>
@@ -239,9 +221,8 @@ export default function RagSettings({ embedded }: { embedded?: boolean } = {}) {
               <Form.Item
                 name="chatKey"
                 label={t('rag.chatKey', '生成 API Key')}
-                extra={chatKeySet ? t('rag.keySet', '已设置(留空保持不变)') : t('rag.keyUnset', '尚未设置')}
               >
-                <Input.Password placeholder={chatKeySet ? '••••••••' : 'sk-...'} autoComplete="new-password" />
+                <Input.Password placeholder={chatKeySet ? t('rag.keySet', '已设置，留空保留') : 'sk-...'} autoComplete="new-password" />
               </Form.Item>
             </Card>
           </Col>
@@ -263,7 +244,7 @@ function ProbeLine({ label, probe, t }: {
 }) {
   return (
     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-      {probe.ok ? <CheckCircleFilled style={{ color: '#52c41a' }} /> : <CloseCircleFilled style={{ color: '#ff4d4f' }} />}
+      {probe.ok ? <CheckCircleFilled style={{ color: 'var(--success)' }} /> : <CloseCircleFilled style={{ color: 'var(--error)' }} />}
       <b>{label}</b>
       <span style={{ color: 'var(--text-3)' }}>
         {probe.ok
@@ -359,15 +340,6 @@ function VisibilityGroups() {
         </Button>
       }
     >
-      <Alert
-        type="info"
-        showIcon
-        style={{ marginBottom: 16 }}
-        message={t(
-          'rag.groupsHint',
-          '可见组 = 一组角色。给文档打上可见组后,只有拥有组内角色的用户能检索到该文档。改动这里的组,所有挂该组的文档实时生效。未打组的文档仅上传者与管理员可见。',
-        )}
-      />
       <Table<RagVisibilityGroup>
         rowKey="id"
         size="middle"

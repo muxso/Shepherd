@@ -10,6 +10,8 @@ mod config;
 mod debug_send;
 mod decomposition_run;
 mod design_bridge;
+#[cfg(feature = "yunxiao")]
+mod devops_notification;
 #[cfg(feature = "environment-plugins")]
 mod environment_extension;
 #[cfg(not(feature = "environment-plugins"))]
@@ -33,11 +35,17 @@ mod pool_runner_ws;
 mod prd_draft_route;
 mod problem;
 mod project_file;
+mod project_groups;
+mod project_rename;
+mod project_scripts;
 mod ratelimit;
 mod references_route;
+mod report_address;
 mod report_archive_job;
 mod routes;
+mod scenario_notice;
 mod scenario_run;
+mod system_logs;
 mod system_qa;
 mod test_assets_source;
 
@@ -238,6 +246,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "FUNCTIONAL_CASE:READ+ADD+UPDATE+DELETE".to_string(),
                 "RUNNER:READ+ADD+EDIT+EXECUTE".to_string(),
                 "PERF:READ+EXECUTE".to_string(),
+                "SYSTEM_PARAMETER:READ+UPDATE".to_string(),
+                "TASK_CENTER:READ+UPDATE".to_string(),
+                "PLUGIN:READ".to_string(),
+                "SYSTEM_LOG:READ".to_string(),
+                "TEST_ASSET:READ+UPDATE".to_string(),
+                "DEVOPS:READ+SYNC".to_string(),
                 "RESOURCE_POOL:READ+ADD+UPDATE+DELETE".to_string(),
                 "REQUIREMENT:READ+ADD+UPDATE+DELETE".to_string(),
                 "TASK:READ+ADD+EXECUTE+UPDATE".to_string(),
@@ -425,10 +439,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let skill_repo = Arc::new(PgSkillRepository::new(pool.clone()));
     let skill_admin = SkillService::new(skill_repo.clone());
-    let skill_routes = skill::adapters::http::router(
+    let skill_routes = skill::adapters::http::project_router(
         CreateSkillUseCase::new(skill_repo.clone()),
         skill_admin.clone(),
         sessions.clone(),
+        pool.clone(),
     );
 
     // SHEPHERD_AGENT_ASYNC: run the subprocess in the background and finish via an HTTP
@@ -674,7 +689,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         case_management::application::ImportCasesUseCase::new(case_repo.clone()),
         case_repo,
         sessions.clone(),
-    );
+    )
+    .layer(tower_http::compression::CompressionLayer::new());
 
     let scenario_repo =
         Arc::new(api_scenario::adapters::pg::PgApiScenarioRepository::new(pool.clone()));
@@ -694,6 +710,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
         run_events.clone(),
     );
+    let environment_runtime = environment_extension::Runtime::load(&pool).await?;
+    let environment_resolver =
+        environment_extension::ExecutionResolver::new(pool.clone(), environment_runtime.clone());
     let plan_executor = api_test::adapters::plan::PlanExecutor::new(
         Arc::new(PgCaseSpecSource::new(pool.clone())),
         Arc::new(PgCaseResultSink::new(pool.clone())),
@@ -702,6 +721,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let scenario_runner = scenario_run::ScenarioRunner {
         compile: api_scenario::application::CompileScenarioUseCase::new(scenario_repo.clone()),
         executor: plan_executor,
+        preparation: Some(environment_resolver.clone()),
+        actor: None,
         envs: api_envs.clone(),
         reports: api_test::adapters::PgBatchReport::new(pool.clone()),
         recorder: api_scenario::application::RecordScenarioExecutionUseCase::new(
@@ -731,9 +752,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Arc::new(PgCaseSpecSource::new(pool.clone())),
         api_envs,
     );
-    let environment_runtime = environment_extension::Runtime::load(&pool).await?;
-    let environment_resolver =
-        environment_extension::ExecutionResolver::new(pool.clone(), environment_runtime.clone());
     let debug_send_routes = debug_send::router(sessions.clone(), environment_resolver);
 
     let plan_scheduler_routes =
@@ -743,7 +761,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     report_archive_job::spawn(pool.clone());
 
-    let plugin_routes = plugins::router(&pool, sessions.clone())
+    let plugin_routes = plugins::router(&pool, sessions.clone(), notifier.clone())
         .await?
         .merge(environment_extension::router(pool.clone(), sessions.clone(), environment_runtime));
     let case_summary_routes = case_exec_summary::router(pool.clone(), sessions.clone());
@@ -799,12 +817,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .merge(org_routes)
                 .merge(role_routes)
                 .merge(apikey_routes)
-                .merge(llm_model_routes),
+                .merge(llm_model_routes)
+                .merge(report_address::router(pool.clone(), sessions.clone())),
         ),
         routes::group(
             "project",
             project_routes
+                .merge(project_rename::router(pool.clone(), sessions.clone()))
+                .merge(project_scripts::router(pool.clone(), sessions.clone()))
                 .merge(project_member_routes)
+                .merge(project_groups::router(pool.clone(), sessions.clone()))
                 .merge(project_template_routes)
                 .merge(references_routes),
         ),
@@ -855,6 +877,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         routes::group("debug", debug_send_routes),
         routes::group("meta", openapi::routes().merge(health_routes(pool.clone()))),
     ]);
+
+    let app = system_logs::attach(app, pool.clone(), sessions.clone());
 
     let listener = tokio::net::TcpListener::bind(&bind).await?;
     tracing::info!(%bind, "server listening");

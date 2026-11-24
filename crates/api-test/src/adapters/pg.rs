@@ -408,7 +408,8 @@ impl CaseSpecSource for PgCaseSpecSource {
             .map_err(|e| PortError::Backend(format!("bad assertions json: {e}")))?;
         let processors_json: serde_json::Value = r.try_get("processors").map_err(map_err)?;
         let processors: Vec<Processor> =
-            serde_json::from_value(processors_json).unwrap_or_default();
+            api_runner::domain::preparation::decode_step_processors(processors_json)
+                .unwrap_or_default();
 
         let headers_json: serde_json::Value =
             r.try_get("headers").unwrap_or_else(|_| serde_json::json!([]));

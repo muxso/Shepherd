@@ -1,4 +1,11 @@
-WITH resolved_code AS MATERIALIZED (
+WITH sonar_inputs AS (
+ SELECT source_id,scope,task_id,repository_id,revision,analyzed_at,report
+ FROM ms_devops_sonar_analysis WHERE source_id=$1 AND $8::jsonb IS NULL
+ UNION ALL
+ SELECT $1,report->>'scope',report->>'taskId',report->>'repositoryId',lower(report->>'revision'),
+        (report->>'analyzedAt')::timestamptz,report
+ FROM jsonb_array_elements(COALESCE($8,'[]'::jsonb)) AS entries(report)
+), resolved_code AS MATERIALIZED (
  SELECT kind,external_id,payload FROM ms_devops_statistics_resolved
  WHERE source_id=$1 AND active AND kind='commit'
 ), code_times AS MATERIALIZED (
@@ -7,6 +14,24 @@ WITH resolved_code AS MATERIALIZED (
      pg_input_is_valid(payload->>'authoredAt','timestamptz')
    THEN (payload->>'authoredAt')::timestamptz END AS authored_at
  FROM resolved_code
+), sonar_pushes AS (
+ SELECT DISTINCT ON (a.repository_id, a.report#>>'{push,branch}', a.report#>>'{push,baseRevision}', a.revision)
+   author.name, COALESCE(roster.group_name, identity.group_name, '待归属') AS member_group, identity.name IS NOT NULL AS known_identity,
+   (pushed.at AT TIME ZONE 'Asia/Shanghai')::date AS day, a.report->>'gate' AS gate,
+   a.report#>>'{push,baselineVerified}' IS DISTINCT FROM 'false' AS baseline_verified, a.report, a.analyzed_at
+ FROM sonar_inputs a
+ CROSS JOIN LATERAL (SELECT (a.report#>>'{push,pushedAt}')::timestamptz AS at) pushed
+ LEFT JOIN ms_devops_author_alias alias ON alias.source_id=a.source_id
+   AND alias.alias=btrim(a.report#>>'{push,author}')
+ CROSS JOIN LATERAL (SELECT COALESCE(alias.name, NULLIF(btrim(a.report#>>'{push,author}'), '')) AS name) author
+ LEFT JOIN ms_devops_author_identity identity ON identity.source_id=a.source_id AND identity.name=author.name
+ LEFT JOIN ms_devops_activity_member roster ON roster.source_id=a.source_id AND roster.name=author.name
+ WHERE $2='code' AND a.source_id=$1 AND a.scope='sonar_repository' AND a.report ? 'push'
+   AND author.name IS NOT NULL AND (roster.name IS NULL OR (roster.enabled AND 'code'=ANY(roster.roles)))
+   AND (pushed.at AT TIME ZONE 'Asia/Shanghai')::date >= (now() AT TIME ZONE 'Asia/Shanghai')::date - ($6::int-1)
+   AND pushed.at <= now()
+ ORDER BY a.repository_id, a.report#>>'{push,branch}', a.report#>>'{push,baseRevision}', a.revision,
+   a.analyzed_at DESC, a.task_id DESC
 ), activity_code AS (
  SELECT kind,external_id,payload FROM (
    SELECT *,row_number() OVER (
@@ -29,6 +54,20 @@ WITH resolved_code AS MATERIALIZED (
 )
 SELECT jsonb_build_object(
  'source',to_jsonb(s),'now',now(),
+ 'sonarMembers',COALESCE((
+   SELECT jsonb_agg(jsonb_build_object('name',name,'group',member_group,'attribution',CASE WHEN known_identity THEN 'person' ELSE 'unmappedAccount' END) ORDER BY name)
+   FROM (SELECT DISTINCT name,member_group,known_identity FROM sonar_pushes) members
+ ),'[]'),
+ 'sonarDaily',COALESCE((
+   SELECT jsonb_agg(jsonb_build_object('member',name,'date',day,'pushes',pushes,'passed',passed,'failed',failed,
+     'unverifiedBaseline',unverified,'recent',recent) ORDER BY day,name)
+   FROM (
+     SELECT name,day,count(*) pushes,count(*) FILTER (WHERE gate='OK') passed,
+       count(*) FILTER (WHERE gate='ERROR') failed, count(*) FILTER (WHERE NOT baseline_verified) unverified,
+       to_jsonb((array_agg(report ORDER BY analyzed_at DESC))[1:10]) recent
+     FROM sonar_pushes GROUP BY name,day
+   ) totals
+ ),'[]'),
  'authorGroups',COALESCE((SELECT jsonb_agg(jsonb_build_object('author',author,'group',group_name)) FROM (SELECT DISTINCT payload->>'author' AS author,payload->>'group' AS group_name FROM resolved_code WHERE NULLIF(payload->>'author','') IS NOT NULL AND NULLIF(payload->>'group','') IS NOT NULL) g),'[]'),
  'reviewPolicy',COALESCE((SELECT policy FROM ms_devops_activity_review_policy WHERE source_id=s.id),$7::jsonb),
  'collectedSince',(SELECT min(finished_at) FROM ms_devops_sync_run WHERE source_id=s.id AND status='SUCCESS'),

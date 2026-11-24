@@ -55,20 +55,44 @@ fn response(result: AssetResult<Value>) -> Response {
         Err(e) => {
             let code = match &e {
                 AssetError::Invalid(_) => StatusCode::BAD_REQUEST,
-                AssetError::Forbidden => StatusCode::FORBIDDEN,
+                AssetError::Forbidden | AssetError::AccessDenied(_) => StatusCode::FORBIDDEN,
                 AssetError::NotFound => StatusCode::NOT_FOUND,
                 AssetError::Conflict(_) => StatusCode::CONFLICT,
                 AssetError::Storage => StatusCode::INTERNAL_SERVER_ERROR,
             };
-            (code, Json(json!({"error":e.to_string()}))).into_response()
+            let body = match e {
+                AssetError::AccessDenied(detail) => {
+                    json!({"error":"permission denied","requiredAccess":detail})
+                }
+                _ => json!({"error":e.to_string()}),
+            };
+            (code, Json(body)).into_response()
         }
     }
 }
 async fn gate(s: &AssetState, u: &AuthUser, p: &str, write: bool) -> AssetResult<()> {
-    if !u.can("FUNCTIONAL_CASE", if write { "ADD" } else { "READ" }) || !u.can("PROJECT", "READ") {
-        return Err(AssetError::Forbidden);
+    for (resource, action, label) in [
+        ("TEST_ASSET", "READ", "服务资产 · 查询"),
+        ("PROJECT", "READ", "项目 · 查询"),
+        (
+            "FUNCTIONAL_CASE",
+            if write { "ADD" } else { "READ" },
+            if write { "功能用例 · 新增" } else { "功能用例 · 查询" },
+        ),
+    ] {
+        if !u.can(resource, action) {
+            return Err(AssetError::AccessDenied(label));
+        }
     }
-    s.store.authorize(p, &u.user_id, u.can("SYSTEM_USER", "UPDATE")).await
+    if write && !u.can("TEST_ASSET", "UPDATE") {
+        return Err(AssetError::AccessDenied("服务资产 · 更新"));
+    }
+    s.store.authorize(p, &u.user_id, u.can("SYSTEM_USER", "UPDATE")).await.map_err(|error| {
+        match error {
+            AssetError::Forbidden => AssetError::AccessDenied("项目成员"),
+            error => error,
+        }
+    })
 }
 async fn manager(s: &AssetState, u: &AuthUser, p: &str) -> AssetResult<()> {
     gate(s, u, p, true).await?;
@@ -78,7 +102,24 @@ async fn manager(s: &AssetState, u: &AuthUser, p: &str) -> AssetResult<()> {
     Ok(())
 }
 async fn overview(u: AuthUser, State(s): State<AssetState>, Path(p): Path<String>) -> Response {
-    response(async{gate(&s,&u,&p,false).await?;let mut data=s.store.overview(&p).await?;if !u.can("REQUIREMENT","READ"){data["imports"]=json!([]);}data["permissions"]=json!({"edit":u.can("FUNCTIONAL_CASE","ADD"),"manage":u.can("PROJECT","UPDATE")&&u.can("FUNCTIONAL_CASE","ADD"),"import":u.can("REQUIREMENT","ADD")&&u.can("REQUIREMENT","READ")&&u.can("PROJECT","UPDATE")&&u.can("FUNCTIONAL_CASE","ADD")});Ok(data)}.await)
+    response(
+        async {
+            gate(&s, &u, &p, false).await?;
+            let mut data = s.store.overview(&p).await?;
+            if !u.can("REQUIREMENT", "READ") {
+                data["imports"] = json!([]);
+            }
+            let edit = u.can("TEST_ASSET", "UPDATE") && u.can("FUNCTIONAL_CASE", "ADD");
+            let manage = edit && u.can("PROJECT", "UPDATE");
+            data["permissions"] = json!({
+                "edit": edit,
+                "manage": manage,
+                "import": manage && u.can("REQUIREMENT", "ADD") && u.can("REQUIREMENT", "READ"),
+            });
+            Ok(data)
+        }
+        .await,
+    )
 }
 async fn sources(u: AuthUser, State(s): State<AssetState>, Path(p): Path<String>) -> Response {
     response(

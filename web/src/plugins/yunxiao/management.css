@@ -22,7 +22,19 @@
 .yx-management-trend-caption { display:flex;justify-content:space-between;align-items:center;gap:12px;font-size:12px;color:var(--text-3);min-height:26px; }
 .yx-management-scope { display:flex;align-items:center;justify-content:space-between;gap:12px;color:var(--text-3);font-size:12px;margin-bottom:16px; }
 .yx-management-filters { display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-bottom:16px; }
-.yx-management-notes { color:var(--text-3);font-size:12px;line-height:1.7;margin-top:14px; }
 @media(max-width:1000px) { .yx-management-grid-layout { grid-template-columns:1fr; }.yx-management-summary {grid-template-columns:repeat(2,minmax(0,1fr));}.yx-management-trend-caption {flex-wrap:wrap;} }
 
 .yx-management-summary > article { cursor:default; }
+
+.yx-devops-sync {
+  flex: 0 0 36px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding-inline: 16px;
+  border-block-start: 1px solid var(--border-soft);
+  background: var(--panel);
+  color: var(--text-2);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}

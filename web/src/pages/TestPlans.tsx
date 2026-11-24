@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { Button, Empty, Segmented, Table, Tabs, Tag, Tooltip } from 'antd'
 import { QuestionCircleOutlined, ReloadOutlined } from '@ant-design/icons'
 import { message, modal } from '../feedback'
@@ -42,6 +43,29 @@ export default function TestPlans() {
   const [expandedKeys, setExpandedKeys] = useState<string[]>([])
   const [report, setReport] = useState<{ id: string; name: string } | null>(null)
   const tabs = useWorkTabs()
+  const [params, setParams] = useSearchParams()
+  const linkedPlanId = params.get('report') === '1' ? params.get('open') : null
+  const [pendingReportId, setPendingReportId] = useState(linkedPlanId)
+  useEffect(() => {
+    if (linkedPlanId) setPendingReportId(linkedPlanId)
+  }, [linkedPlanId])
+  useEffect(() => {
+    if (!pendingReportId) return
+    const plan = plans.find((item) => item.id === pendingReportId && !isGroup(item))
+    if (plan) {
+      setReport({ id: plan.id, name: plan.label })
+      setPendingReportId(null)
+    }
+  }, [pendingReportId, plans])
+
+  const closeReport = () => {
+    setReport(null)
+    if (!params.has('report')) return
+    const next = new URLSearchParams(params)
+    next.delete('report')
+    setParams(next, { replace: true })
+  }
+
 
   const loadStats = async (list: RegItem[]) => {
     const entries = await Promise.all(
@@ -449,7 +473,7 @@ export default function TestPlans() {
           if (created) tabs.open(created.id)
         }}
       />
-      <PlanReportDrawer open={!!report} planId={report?.id || ''} name={report?.name || ''} projectId={projectId} onClose={() => setReport(null)} />
+      <PlanReportDrawer open={!!report} planId={report?.id || ''} name={report?.name || ''} projectId={projectId} onClose={closeReport} />
     </>
   )
 }

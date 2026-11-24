@@ -58,6 +58,8 @@ struct HeaderKv {
 #[serde(rename_all = "camelCase")]
 struct SendBody {
     #[serde(default)]
+    project_id: Option<String>,
+    #[serde(default)]
     environment_id: Option<String>,
     #[serde(default)]
     base_url: Option<String>,
@@ -213,11 +215,29 @@ async fn send(
             Ok(method) => method,
             Err(_) => return (StatusCode::BAD_REQUEST, "unsupported HTTP method").into_response(),
         };
-    let prepared = match state
-        .environment
-        .prepare(user.clone(), req.environment_id.as_deref(), req.variables, &req.pre_processors)
-        .await
-    {
+    let prepared = if let Some(project) = req.project_id.as_deref() {
+        state
+            .environment
+            .prepare_request_project(
+                user.clone(),
+                project,
+                req.environment_id.as_deref(),
+                req.variables,
+                &req.pre_processors,
+            )
+            .await
+    } else {
+        state
+            .environment
+            .prepare(
+                user.clone(),
+                req.environment_id.as_deref(),
+                req.variables,
+                &req.pre_processors,
+            )
+            .await
+    };
+    let prepared = match prepared {
         Ok(prepared) => prepared,
         Err(response) => return response,
     };
@@ -256,6 +276,17 @@ async fn send(
                 .into_response()
         }
     };
+    let mut response_assertions = req.assertions;
+    if !prepared.steps.is_empty() {
+        if let Err(error) = api_runner::domain::preparation::render_assertions(
+            &mut response_assertions,
+            &prepared.variables,
+            1_048_576,
+        ) {
+            return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error":error.to_string()})))
+                .into_response();
+        }
+    }
     match runner.execute(&spec).await {
         Ok(s) => {
             let snapshot = ResponseSnapshot {
@@ -265,10 +296,10 @@ async fn send(
                 elapsed_ms: s.elapsed_ms,
                 timings: s.timings,
             };
-            let assertions: Vec<AssertionResult> = if req.assertions.is_empty() {
+            let assertions: Vec<AssertionResult> = if response_assertions.is_empty() {
                 Vec::new()
             } else {
-                evaluate_detailed_with_vars(&req.assertions, &snapshot, &prepared.variables)
+                evaluate_detailed_with_vars(&response_assertions, &snapshot, &prepared.variables)
                     .into_iter()
                     .map(Into::into)
                     .collect()

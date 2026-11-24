@@ -1036,6 +1036,7 @@ dependencies = [
  "iana-time-zone",
  "js-sys",
  "num-traits",
+ "serde",
  "wasm-bindgen",
  "windows-link",
 ]
@@ -3280,6 +3281,7 @@ dependencies = [
  "tokio",
  "tower 0.5.3",
  "tracing",
+ "url",
  "utoipa",
  "webauth",
 ]

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Button, Card, Input, Select, Switch, Table, Tag } from 'antd'
+import { Button, Card, Input, Select, Switch, Table, Tag, Typography, Space } from 'antd'
 import ResizableDrawer from '../components/ResizableDrawer'
 import { PlusOutlined, RobotOutlined, SendOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
@@ -18,13 +18,22 @@ type NavKey = 'robot' | 'rules'
 const PLATFORMS: NoticeRobotPlatform[] = ['FEISHU', 'DINGTALK', 'WECOM']
 const CHANNELS: NoticeChannel[] = ['IN_APP', 'ROBOT']
 // Producer event types (matches the backend Notifier producers) plus the wildcard.
-const EVENTS = ['BUG_ASSIGNED', 'BUG_STATUS_CHANGED', 'REVIEW_CREATED', 'MENTIONED', 'PLAN_SCHEDULE_FAILED', '*']
+const EVENTS = ['BUG_ASSIGNED', 'BUG_STATUS_CHANGED', 'REVIEW_CREATED', 'MENTIONED', 'PLAN_SCHEDULE_FAILED', 'PLAN_RUN_FINISHED', 'SCENARIO_RUN_SUCCEEDED', 'SCENARIO_RUN_FAILED', 'SONAR_ANALYSIS_COMPLETED', '*']
 
 type TFn = (k: string, d?: string) => string
 
 const platformLabel = (t: TFn, p: NoticeRobotPlatform) => t(`msgset.platform.${p}`, p)
 const channelLabel = (t: TFn, c: NoticeChannel) => t(`msgset.ch.${c}`, c)
-const eventLabel = (t: TFn, e: string) => (e === '*' ? t('msgset.evtAll', '全部事件 (*)') : t(`msg.evt.${e}`, e))
+const reportEventLabels: Record<string, [string, string]> = {
+  PLAN_RUN_FINISHED: ['msg.planFinished', '测试计划执行完成'],
+  SCENARIO_RUN_SUCCEEDED: ['msg.scenarioSucceeded', '场景执行成功'],
+  SCENARIO_RUN_FAILED: ['msg.scenarioFailed', '场景执行失败'],
+}
+const eventLabel = (t: TFn, e: string) => {
+  if (e === '*') return t('msgset.evtAll', '全部事件 (*)')
+  const report = reportEventLabels[e]
+  return report ? t(...report) : t(`msg.evt.${e}`, e)
+}
 
 interface RobotDraft {
   id?: string
@@ -564,12 +573,19 @@ function RuleDrawer({
         )}
       {fieldRow(
         t('msgset.colTemplate', '模板'),
-        <Input.TextArea
-          rows={4}
-          value={d.template}
-          onChange={(e) => set({ template: e.target.value })}
-          placeholder={t('msgset.tmplPlaceholder', '可使用 ${title} ${operator} ${time} 变量,留空则用默认模板')}
-        />,
+        <Space direction="vertical" style={{ width: '100%' }}>
+          <Input.TextArea
+            rows={4}
+            value={d.template}
+            onChange={(e) => set({ template: e.target.value })}
+            placeholder={t('msgset.tmplPlaceholder', '可使用 ${title} ${operator} ${time} 变量,留空则用默认模板')}
+          />
+          <Typography.Text type="secondary">
+            {d.eventType === 'SONAR_ANALYSIS_COMPLETED'
+              ? t('msgset.sonarTemplateVars', '代码质量模板变量：标题 ${title}、分析摘要和报告链接 ${content}、提交作者 ${operator}、通知时间 ${time}。')
+              : t('msgset.reportTemplateVars', '报告模板变量：项目 ${project}、场景或计划 ${scenario}、触发人 ${trigger}、最近变更人 ${changedBy}、关注人 ${followers}、创建人 ${creator}。')}
+          </Typography.Text>
+        </Space>,
       )}
       {fieldRow(t('msgset.colEnabled', '是否启用'), <Switch checked={d.enabled} onChange={(c) => set({ enabled: c })} />)}
     </ResizableDrawer>

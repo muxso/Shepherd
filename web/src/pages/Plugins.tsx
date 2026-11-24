@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
-import { Alert, Button, Card, Space, Spin, Tag, Typography } from 'antd'
+import { Alert, Button, Card, Space, Tag, Typography } from 'antd'
 import { Link } from 'react-router-dom'
-import { usePlugins } from '../plugins'
+import { pluginApi, type Plugin } from '../api'
+import { PageSkeleton, ReadError } from '../components/Page'
 import { useApp } from '../context'
 import { scopedPath } from '../scope'
 import { environmentPluginApi, type Descriptor } from '../plugins/environment/api'
@@ -9,7 +10,17 @@ import { environmentGroups } from '../plugins/environment/catalog'
 import '../plugins/environment/catalog.css'
 
 export default function Plugins() {
-  const { items, loading, error } = usePlugins()
+  const [items, setItems] = useState<Plugin[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<unknown>()
+  useEffect(() => {
+    let active = true
+    pluginApi.managementList()
+      .then(data => { if (active) setItems(data.items) })
+      .catch(error => { if (active) setError(error) })
+      .finally(() => { if (active) setLoading(false) })
+    return () => { active = false }
+  }, [])
   const { projectId } = useApp()
   const environment = items.find(plugin => plugin.id === 'environment')
   const [descriptors, setDescriptors] = useState<Descriptor[]>([])
@@ -26,7 +37,7 @@ export default function Plugins() {
   }, [environment?.installed, environment?.enabled])
   return <div style={{ padding: 24, height: '100%', overflowY: 'auto', boxSizing: 'border-box' }}>
     <Typography.Title level={3}>插件</Typography.Title>
-    {loading ? <Spin /> : error ? <Alert type="error" message={error} /> : <div className="plugin-catalog-groups">
+    {loading ? <PageSkeleton /> : error != null ? <ReadError error={error} title="插件目录读取失败" /> : <div className="plugin-catalog-groups">
       <section aria-label="数据同步">
         <Typography.Title level={4}>数据同步与集成</Typography.Title>
         <div className="plugin-catalog-grid">{items.filter(plugin => plugin.id !== 'environment').map(plugin =>

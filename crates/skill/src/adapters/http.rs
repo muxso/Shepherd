@@ -19,6 +19,8 @@ struct SkillState {
     create: CreateSkillUseCase,
     admin: SkillService,
     sessions: Arc<dyn SessionStore>,
+    #[cfg(feature = "pg")]
+    pool: Option<sqlx::PgPool>,
 }
 
 impl FromRef<SkillState> for Arc<dyn SessionStore> {
@@ -32,11 +34,31 @@ pub fn router(
     admin: SkillService,
     sessions: Arc<dyn SessionStore>,
 ) -> Router {
+    routes(SkillState {
+        create,
+        admin,
+        sessions,
+        #[cfg(feature = "pg")]
+        pool: None,
+    })
+}
+
+#[cfg(feature = "pg")]
+pub fn project_router(
+    create: CreateSkillUseCase,
+    admin: SkillService,
+    sessions: Arc<dyn SessionStore>,
+    pool: sqlx::PgPool,
+) -> Router {
+    routes(SkillState { create, admin, sessions, pool: Some(pool) })
+}
+
+fn routes(state: SkillState) -> Router {
     Router::new()
         .route("/skill", post(create_skill).get(list_skills))
         .route("/skill/compose", post(compose))
         .route("/skill/{id}", get(get_skill).put(update_skill).delete(delete_skill))
-        .with_state(SkillState { create, admin, sessions })
+        .with_state(state)
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -129,6 +151,37 @@ fn cmd_err(e: SkillCmdError) -> Response {
     }
 }
 
+async fn authorize_project(
+    _st: &SkillState,
+    _user: &AuthUser,
+    _project: &str,
+) -> Result<(), Response> {
+    #[cfg(feature = "pg")]
+    if let Some(pool) = &_st.pool {
+        let admin = _user.can("SYSTEM_USER", "READ") && _user.can("SYSTEM_USER", "UPDATE");
+        match sqlx::query_scalar::<_, bool>("SELECT ms_has_project_access($1, $2, $3)")
+            .bind(_project)
+            .bind(&_user.user_id)
+            .bind(admin)
+            .fetch_one(pool)
+            .await
+        {
+            Ok(true) => {}
+            Ok(false) => {
+                return Err((StatusCode::FORBIDDEN, "当前账号不能访问此项目的技能").into_response())
+            }
+            Err(_) => return Err(StatusCode::INTERNAL_SERVER_ERROR.into_response()),
+        }
+    }
+    Ok(())
+}
+
+async fn authorized_skill(st: &SkillState, user: &AuthUser, id: &str) -> Result<Skill, Response> {
+    let skill = st.admin.get(id).await.map_err(cmd_err)?;
+    authorize_project(st, user, &skill.project_id).await?;
+    Ok(skill)
+}
+
 #[utoipa::path(post, path = "/skill", tag = "skill", request_body = CreateBody, responses((status = 201, body = SkillResponse), (status = 409)), security(("bearer" = [])))]
 async fn create_skill(
     user: AuthUser,
@@ -137,6 +190,9 @@ async fn create_skill(
 ) -> Response {
     if !user.can("SKILL", "ADD") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    if let Err(response) = authorize_project(&st, &user, &b.project_id).await {
+        return response;
     }
     match st
         .create
@@ -165,6 +221,9 @@ async fn list_skills(
     if !user.can("SKILL", "READ") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
+    if let Err(response) = authorize_project(&st, &user, &q.project_id).await {
+        return response;
+    }
     match st.admin.list(&q.project_id).await {
         Ok(items) => {
             let body: Vec<SkillResponse> = items.iter().map(SkillResponse::from).collect();
@@ -183,9 +242,9 @@ async fn get_skill(
     if !user.can("SKILL", "READ") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
-    match st.admin.get(&id).await {
+    match authorized_skill(&st, &user, &id).await {
         Ok(s) => (StatusCode::OK, Json(SkillResponse::from(&s))).into_response(),
-        Err(e) => cmd_err(e),
+        Err(response) => response,
     }
 }
 
@@ -198,6 +257,9 @@ async fn update_skill(
 ) -> Response {
     if !user.can("SKILL", "UPDATE") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    if let Err(response) = authorized_skill(&st, &user, &id).await {
+        return response;
     }
     match st
         .admin
@@ -218,6 +280,9 @@ async fn delete_skill(
     if !user.can("SKILL", "DELETE") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
+    if let Err(response) = authorized_skill(&st, &user, &id).await {
+        return response;
+    }
     match st.admin.delete(&id).await {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(e) => cmd_err(e),
@@ -232,6 +297,9 @@ async fn compose(
 ) -> Response {
     if !user.can("SKILL", "READ") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    if let Err(response) = authorize_project(&st, &user, &b.project_id).await {
+        return response;
     }
     match st.admin.compose(&b.project_id, &b.skill_ids).await {
         Ok(c) => (

@@ -1,0 +1,11 @@
+.yx-sonar-analysis { border:1px solid var(--border-soft); border-radius:8px; margin:8px 0 14px; padding:12px; }
+.yx-sonar-analysis header { display:flex; gap:8px 12px; flex-wrap:wrap; align-items:baseline; margin-bottom:8px; }
+.yx-sonar-analysis header small, .yx-sonar-metrics small { color:var(--text-3); }
+.yx-sonar-metrics { display:grid; grid-template-columns:repeat(auto-fit,minmax(110px,1fr)); gap:8px; margin:0; }
+.yx-sonar-metrics > div { background:var(--panel); border:1px solid var(--border-soft); border-radius:5px; padding:8px; min-height:86px; }
+.yx-sonar-metrics dt { font-size:12px; }
+.yx-sonar-metrics dd { margin:3px 0; font-size:22px; line-height:1.2; font-weight:600; font-variant-numeric:tabular-nums; }
+.yx-sonar-metrics div > small { display:block; }
+.yx-sonar-condition-failed { color:var(--activity-warm,#a34d10); font-size:10px; }
+
+.yx-sonar-data-note { margin: 8px 0; font-size: 12px; color: var(--text-2); }

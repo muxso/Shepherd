@@ -1,15 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Alert, Button, Card, Form, Input, Popconfirm, Select, Space, Switch, Table, Tag } from 'antd'
-import ResizableDrawer from '../components/ResizableDrawer'
+import { Button, Card, Form, Input, Popconfirm, Select, Space, Switch, Table, Tag } from 'antd'
 import EditDrawer from '../components/EditDrawer'
 import { FolderOpenOutlined, SearchOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
-import { message } from '../feedback'
-import { api, ApiError, userStore, type Organization, type Project, type ProjectMember, type Role, type User } from '../api'
+import { message, modal } from '../feedback'
+import { api, ApiError, userStore, type Organization, type Project, type ProjectMember, type ProjectGroups, type User } from '../api'
 import { useApp } from '../context'
 import { useI18n } from '../i18n'
-import { SelectProjectEmpty } from '../components/Page'
-import PermissionMatrix, { parsePermissions, serializePermissions } from '../components/PermissionMatrix'
+import { ReadError, SelectProjectEmpty } from '../components/Page'
 
 // Project & permissions: narrow grouped left nav + right content (ref #44-#48).
 type NavKey = 'projects' | 'basic' | 'appSettings' | 'members' | 'userGroups'
@@ -17,15 +15,15 @@ type NavKey = 'projects' | 'basic' | 'appSettings' | 'members' | 'userGroups'
 export default function ProjectAdmin() {
   const { t } = useI18n()
   const { projects, projectId } = useApp()
-  const [nav, setNav] = useState<NavKey>('projects')
+  const [nav, setNav] = useState<NavKey>('basic')
   const project = projects.find((p) => p.id === projectId)
 
   if (!projectId || !project) return <SelectProjectEmpty />
 
   const groups: { title: string; items: { key: NavKey; label: string }[] }[] = [
     { title: t('pa.grpProjectPerm', '项目与权限'), items: [
-      { key: 'projects', label: t('pa.navProjects', '项目') },
       { key: 'basic', label: t('proj.basic', '基本信息') },
+      { key: 'projects', label: t('pa.navProjects', '项目') },
       { key: 'appSettings', label: t('proj.appSettings', '应用设置') },
     ] },
     { title: t('proj.grpMember', '成员权限'), items: [
@@ -63,7 +61,7 @@ export default function ProjectAdmin() {
         {nav === 'basic' && <BasicInfo project={project} t={t} />}
         {nav === 'appSettings' && <AppSettings t={t} />}
         {nav === 'members' && <Members t={t} projectId={projectId} />}
-        {nav === 'userGroups' && <UserGroups t={t} />}
+        {nav === 'userGroups' && <UserGroups key={projectId} projectId={projectId} t={t} />}
       </div>
     </div>
   )
@@ -102,6 +100,27 @@ function ProjectsPanel({ t, projects, currentId }: { t: TFn; projects: Project[]
 
 function BasicInfo({ project, t }: { project: { id: string; name: string; enable: boolean; organizationId: string }; t: TFn }) {
   const [orgName, setOrgName] = useState('')
+  const { reloadProjects } = useApp()
+  const rename = () => {
+    let name = project.name
+    modal.confirm({
+      title: t('proj.rename', '修改项目名称'),
+      content: <Input aria-label="项目名称" defaultValue={name} maxLength={255} onChange={event => { name = event.target.value }} />,
+      onOk: async () => {
+        const next = name.trim()
+        if (!next) throw new Error('请输入项目名称')
+        if (next === project.name) return
+        try {
+          await api.renameProject(project.id, next)
+          await reloadProjects()
+          message.success('项目名称已保存')
+        } catch (error) {
+          message.error(error instanceof ApiError && error.status === 409 ? '该组织已存在同名项目' : '无法修改项目名称')
+          throw error
+        }
+      },
+    })
+  }
   useEffect(() => {
     api.organizations().then((p: { items: Organization[] }) => {
       setOrgName(p.items.find((o) => o.id === project.organizationId)?.name || project.organizationId)
@@ -114,7 +133,7 @@ function BasicInfo({ project, t }: { project: { id: string; name: string; enable
     </div>
   )
   return (
-    <Card title={t('proj.basic', '基本信息')} size="small" extra={<Button size="small">{t('a.edit', '编辑')}</Button>}>
+    <Card title={t('proj.basic', '基本信息')} size="small" extra={<Button size="small" onClick={rename}>{t('proj.rename', '修改项目名称')}</Button>}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
         <FolderOpenOutlined style={{ fontSize: 28, color: 'var(--brand)' }} />
         <div>
@@ -294,139 +313,63 @@ function AddMemberModal({ open, projectId, candidates, onClose, onDone, t }: {
   )
 }
 
-// User groups: table (name + member count) → row click opens the permission matrix drawer. Member count is
-// computed from the user table's userGroups (matches either group name or group id).
-function UserGroups({ t }: { t: TFn }) {
-  const [roles, setRoles] = useState<Role[]>([])
-  const [users, setUsers] = useState<User[]>([])
-  const [loading, setLoading] = useState(false)
-  const [sel, setSel] = useState<Role | null>(null)
-  const [createOpen, setCreateOpen] = useState(false)
-  const load = useCallback(() => {
+function UserGroups({ projectId, t }: { projectId: string; t: TFn }) {
+  const [data, setData] = useState<ProjectGroups>()
+  const [selected, setSelected] = useState<string>()
+  const [error, setError] = useState<unknown>()
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+
+  const load = useCallback(async () => {
     setLoading(true)
-    Promise.all([api.roles(), api.users().catch(() => ({ items: [] as User[] }))])
-      .then(([rp, up]) => { setRoles(rp.items ?? []); setUsers(up.items ?? []) })
-      .catch(() => { setRoles([]); setUsers([]) })
-      .finally(() => setLoading(false))
-  }, [])
-  useEffect(load, [load])
-  const memberCount = useCallback(
-    (r: Role) => users.filter((u) => (u.userGroups ?? []).some((g) => g === r.name || g === r.id)).length,
-    [users],
-  )
-  const cols: ColumnsType<Role> = [
-    {
-      title: t('proj.groupName', '用户组名称'), dataIndex: 'name',
-      render: (v: string, r) => (
-        <span>
-          {v}
-          {r.scope === 'SYSTEM' && <span style={{ color: 'var(--text-3)', fontSize: 12, marginLeft: 6 }}>{t('pa.sysBuiltin', '(系统内置)')}</span>}
-        </span>
-      ),
-    },
-    {
-      title: t('proj.memberCount', '成员数'), width: 120,
-      render: (_v, r) => <span style={{ color: 'var(--brand)', cursor: 'pointer' }}>{memberCount(r)}</span>,
-    },
-  ]
-  return (
-    <Card size="small" styles={{ body: { padding: 12 } }}>
-      <div style={{ marginBottom: 12 }}><Button type="primary" onClick={() => setCreateOpen(true)}>{t('proj.addGroup', '添加用户组')}</Button></div>
-      <Table<Role>
-        rowKey="id"
-        size="middle"
-        loading={loading}
-        dataSource={roles}
-        columns={cols}
-        pagination={false}
-        onRow={(r) => ({ onClick: () => setSel(r), style: { cursor: 'pointer' } })}
-      />
-      <PermissionDrawer role={sel} onClose={() => setSel(null)} onSaved={() => { setSel(null); load() }} t={t} />
-      <AddGroupModal open={createOpen} onClose={() => setCreateOpen(false)} onDone={() => { setCreateOpen(false); load() }} t={t} />
-    </Card>
-  )
-}
-
-// New user group within a project: PROJECT scope is fixed; permissions are edited in the row-click matrix drawer.
-function AddGroupModal({ open, onClose, onDone, t }: { open: boolean; onClose: () => void; onDone: () => void; t: TFn }) {
-  const [form] = Form.useForm<{ name: string }>()
-  const [busy, setBusy] = useState(false)
-  useEffect(() => { if (open) form.resetFields() }, [open, form])
-  return (
-    <EditDrawer title={t('proj.addGroup', '添加用户组')} open={open} onCancel={onClose} footer={null}>
-      <Form
-        form={form}
-        layout="vertical"
-        onFinish={async (v) => {
-          setBusy(true)
-          try {
-            await api.createRole({ name: v.name.trim(), scope: 'PROJECT', permissions: [] })
-            message.success(t('ug.created', '用户组已创建'))
-            onDone()
-          } catch (e) {
-            message.error(e instanceof ApiError ? e.message : t('ug.createFailed', '创建失败'))
-          } finally {
-            setBusy(false)
-          }
-        }}
-      >
-        <Form.Item name="name" label={t('proj.groupName', '用户组名称')} rules={[{ required: true }]}>
-          <Input placeholder={t('ug.groupNamePlaceholder', '如:接口测试工程师')} autoFocus />
-        </Form.Item>
-        <Button type="primary" htmlType="submit" block loading={busy}>{t('a.create', '创建')}</Button>
-      </Form>
-    </EditDrawer>
-  )
-}
-
-// Permission drawer: Role.permissions ("RES:ACT+ACT") ⇄ checkbox matrix; system built-in groups are read-only; saving goes through updateRole.
-function PermissionDrawer({ role, onClose, onSaved, t }: { role: Role | null; onClose: () => void; onSaved: () => void; t: TFn }) {
-  const readOnly = role?.scope === 'SYSTEM'
-  const [checked, setChecked] = useState<Set<string>>(new Set())
-  const [extras, setExtras] = useState<string[]>([])
-  const [busy, setBusy] = useState(false)
-  useEffect(() => {
-    if (role) {
-      const p = parsePermissions(role.permissions)
-      setChecked(p.checked)
-      setExtras(p.extras)
-    }
-  }, [role])
-  const save = async () => {
-    if (!role) return
-    setBusy(true)
+    setError(undefined)
     try {
-      await api.updateRole(role.id, { name: role.name, permissions: serializePermissions(checked, extras) })
-      message.success(t('ug.saved', '已保存'))
-      onSaved()
-    } catch (e) {
-      message.error(e instanceof ApiError ? e.message : t('ug.saveFailed', '保存失败'))
+      setData(await api.projectGroups(projectId))
+    } catch (error) {
+      setError(error)
     } finally {
-      setBusy(false)
+      setLoading(false)
+    }
+  }, [projectId])
+  useEffect(() => { void load() }, [load])
+
+  const changeGroup = async (roleId: string, attach: boolean) => {
+    setSaving(true)
+    try {
+      await (attach ? api.linkProjectGroup(projectId, roleId) : api.unlinkProjectGroup(projectId, roleId))
+      if (attach) setSelected(undefined)
+      await load()
+    } catch (error) {
+      message.error(error instanceof ApiError ? error.message : t('proj.groupChangeFailed', '无法更新项目用户组'))
+    } finally {
+      setSaving(false)
     }
   }
-  return (
-    <ResizableDrawer
-      open={!!role}
-      onClose={onClose}
-      width="55%"
-      title={role?.name}
-      destroyOnHidden
-      footer={readOnly ? null : (
-        <Space>
-          <Button type="primary" loading={busy} onClick={save}>{t('a.save', '保存')}</Button>
-          <Button onClick={onClose}>{t('a.cancel', '取消')}</Button>
-        </Space>
-      )}
-    >
-      <Alert
-        type="info"
-        closable
-        showIcon
-        style={{ marginBottom: 12 }}
-        message={t('pa.reloginTip', '修改权限后,已登录的会话需要重新登录才会生效')}
-      />
-      <PermissionMatrix checked={checked} onChange={setChecked} disabled={readOnly} />
-    </ResizableDrawer>
-  )
+
+  if (error != null) return <ReadError error={error} title={t('proj.groupsLoadFailed', '无法读取项目用户组')} />
+
+  return <Card size="small">
+    {data?.canManage && <Space wrap style={{ marginBottom: 12 }}>
+      <Select value={selected} onChange={setSelected} showSearch optionFilterProp="label"
+        placeholder={t('proj.selectGroup', '选择现有用户组')} style={{ width: 220 }}
+        options={data.available.map(group => ({ value: group.id, label: group.name }))} />
+      <Button type="primary" disabled={!selected || loading} loading={saving}
+        onClick={() => { if (selected) void changeGroup(selected, true) }}>{t('proj.addGroup', '添加用户组')}</Button>
+    </Space>}
+    <Table<ProjectGroups['items'][number]> rowKey="id" size="middle" dataSource={data?.items ?? []}
+      loading={loading} pagination={false} locale={{ emptyText: t('proj.noLinkedGroups', '项目尚未关联用户组') }}
+      columns={[
+        { title: t('proj.groupName', '用户组名称'), dataIndex: 'name' },
+        { title: t('proj.memberCount', '成员数'), dataIndex: 'memberCount', width: 120 },
+        ...(data?.canManage ? [{
+          title: t('req.action', '操作'), width: 120,
+          render: (_: unknown, group: ProjectGroups['items'][number]) => <Popconfirm
+            title={t('proj.unlinkGroupQuestion', '从此项目移除该用户组？')}
+            description={t('proj.unlinkGroupHint', '仅通过该组获得项目访问的成员将失去访问。')}
+            onConfirm={() => changeGroup(group.id, false)}>
+            <Button size="small" type="link" danger disabled={saving}>{t('proj.unlinkGroup', '移除')}</Button>
+          </Popconfirm>,
+        }] : []),
+      ]} />
+  </Card>
 }

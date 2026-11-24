@@ -121,14 +121,12 @@ async fn require_project_member(
     if is_rag_admin(user) {
         return Ok(());
     }
-    let is_member: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM ms_project_member WHERE project_id = $1 AND user_id = $2)",
-    )
-    .bind(project_id)
-    .bind(&user.user_id)
-    .fetch_one(pool)
-    .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response())?;
+    let is_member: bool = sqlx::query_scalar("SELECT ms_has_project_access($1, $2, false)")
+        .bind(project_id)
+        .bind(&user.user_id)
+        .fetch_one(pool)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response())?;
     if !is_member {
         return Err(
             (StatusCode::FORBIDDEN, "permission denied: not a project member").into_response()
@@ -259,7 +257,7 @@ struct ConfigView {
 }
 
 async fn get_config(user: AuthUser, State(st): State<RagState>) -> Response {
-    if !user.can("SYSTEM_USER", "READ") {
+    if !user.can("SYSTEM_PARAMETER", "READ") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
     let c = st.config.read().expect("rag config poisoned").clone();
@@ -303,7 +301,7 @@ async fn put_config(
     State(st): State<RagState>,
     Json(b): Json<ConfigBody>,
 ) -> Response {
-    if !user.can("SYSTEM_USER", "UPDATE") {
+    if !user.can("SYSTEM_PARAMETER", "UPDATE") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
     // Apply to the live handle (blank key = keep existing), then persist the same values.
@@ -370,8 +368,8 @@ struct TestResult {
 /// Live connectivity check for the configured RAG providers: a tiny embed + chat round-trip, each
 /// reported independently so the UI can show which side is misconfigured. Read-level system perm.
 async fn test_config(user: AuthUser, State(st): State<RagState>) -> Response {
-    if !user.can("SYSTEM_USER", "READ") {
-        return (StatusCode::FORBIDDEN, "permission denied: SYSTEM_USER:READ").into_response();
+    if !user.can("SYSTEM_PARAMETER", "READ") {
+        return (StatusCode::FORBIDDEN, "permission denied: SYSTEM_PARAMETER:READ").into_response();
     }
     let t = std::time::Instant::now();
     let embed = match st.embedder.embed("ping").await {

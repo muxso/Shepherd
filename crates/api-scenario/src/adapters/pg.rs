@@ -75,7 +75,7 @@ fn row_to_step(row: &sqlx::postgres::PgRow) -> Result<ScenarioStep, RepoError> {
                 .clone()
                 .ok_or_else(|| RepoError::Backend("SCENARIO step missing ref_id".into()))?,
         },
-        "LOOP" | "IF" | "ONCE" | "TIMER" => {
+        "LOOP" | "IF" | "ONCE" | "TIMER" | "PLUGIN" | "SCRIPT" => {
             let control = ControlKind::parse(&kind_s)
                 .ok_or_else(|| RepoError::Backend(format!("bad control kind: {kind_s}")))?;
             let payload = inline

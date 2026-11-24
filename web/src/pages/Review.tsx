@@ -6,7 +6,7 @@ import { useScopedNavigate } from '../scope'
 import { message, modal } from '../feedback'
 import type { ColumnsType } from 'antd/es/table'
 import dayjs from 'dayjs'
-import { api, ApiError, userIdStore, userStore, type CaseReviewDetail, type CaseReviewSummary, type FunctionalCase, type Requirement } from '../api'
+import { api, ApiError, userIdStore, userStore, type CaseReviewDetail, type CaseReviewSummary, type FunctionalCaseOption, type Requirement } from '../api'
 import { useApp } from '../context'
 import { useI18n } from '../i18n'
 import { ResizableSider } from '../components/Workspace'
@@ -117,7 +117,8 @@ function CaseReviewList() {
   const { t } = useI18n()
   const { projectId } = useApp()
   const [items, setItems] = useState<CaseReviewSummary[]>([])
-  const [cases, setCases] = useState<FunctionalCase[]>([])
+  const [caseCatalog, setCaseCatalog] = useState<{ projectId: string; cases: FunctionalCaseOption[] }>()
+  const [caseOptionsError, setCaseOptionsError] = useState<unknown>()
   const [modules, setModules] = useState<ReviewModule[]>([])
   const [moduleKey, setModuleKey] = useState('ALL')
   const [seg, setSeg] = useState<'all' | 'reviewed' | 'created'>('all')
@@ -131,15 +132,27 @@ function CaseReviewList() {
   const [form, setForm] = useState<{ editing?: CaseReviewSummary } | null>(null)
   const [detailId, setDetailId] = useState<string | null>(null)
   const [followedIds, setFollowedIds] = useState<Set<string>>(new Set())
-  const caseName = (id: string) => cases.find((c) => c.id === id)?.name || id.slice(0, 8)
+  const cases = caseCatalog?.projectId === projectId ? caseCatalog.cases : undefined
+  const caseNames = useMemo(() => new Map(cases?.map(item => [item.id, item.name])), [cases])
+  const caseName = (id: string) => caseNames.get(id) || id.slice(0, 8)
+  const needsCases = !!detailId || (!!form && !form.editing)
+
+  useEffect(() => {
+    if (!projectId || !needsCases || cases) return
+    let active = true
+    setCaseOptionsError(undefined)
+    api.functionalCaseOptions(projectId)
+      .then(items => { if (active) setCaseCatalog({ projectId, cases: items }) })
+      .catch(error => { if (active) setCaseOptionsError(error) })
+    return () => { active = false }
+  }, [projectId, needsCases, cases])
 
   const load = async () => {
     if (!projectId) { setItems([]); return }
     setLoading(true)
     try {
-      const [rs, cs] = await Promise.all([api.caseReviews(projectId), api.functionalCases(projectId).catch(() => [])])
-      setItems(Array.isArray(rs) ? rs : [])
-      setCases(Array.isArray(cs) ? cs : [])
+      const reviews = await api.caseReviews(projectId)
+      setItems(Array.isArray(reviews) ? reviews : [])
       // Followed review ids for the star action; failure just leaves stars empty.
       api.myFollows(projectId, 'CASE_REVIEW')
         .then((r) => setFollowedIds(new Set(r.entityIds)))
@@ -496,7 +509,9 @@ function CaseReviewList() {
         editing={form?.editing}
         projectId={projectId}
         modules={modules}
-        cases={cases}
+        cases={cases ?? []}
+        caseOptionsLoading={needsCases && !cases && !caseOptionsError}
+        caseOptionsError={caseOptionsError}
         onClose={() => setForm(null)}
         onSaved={() => { setForm(null); load() }}
       />

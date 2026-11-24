@@ -37,7 +37,7 @@ export default function Donut({
 
   return (
     <svg style={{ flexShrink: 0 }} width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
-      <g transform={`rotate(-90 ${cx} ${cx})`}>
+      <g className="ms-summary-chart-series" transform={`rotate(-90 ${cx} ${cx})`}>
         <circle cx={cx} cy={cx} r={r} fill="none" stroke="var(--border-soft)" strokeWidth={thickness} />
         {total > 0 &&
           visible.map((s) => {

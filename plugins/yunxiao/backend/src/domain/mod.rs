@@ -178,6 +178,9 @@ impl ProductivityMetric {
 #[cfg_attr(feature = "http", derive(utoipa::IntoParams))]
 #[serde(rename_all = "camelCase")]
 pub struct ListQuery {
+    pub month: Option<String>,
+    pub sort_order: Option<String>,
+    pub current_status: Option<String>,
     pub metric: Option<ProductivityMetric>,
     pub date: Option<String>,
     pub kind: Option<String>,
@@ -225,3 +228,5 @@ mod tests {
         assert!(c.validate().is_err());
     }
 }
+
+pub mod sonar;

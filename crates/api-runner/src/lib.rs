@@ -17,3 +17,5 @@ pub use domain::{
 };
 
 pub use domain::{PreparationStepReport, PreparedVariables};
+
+pub use domain::runner::ScriptSource;

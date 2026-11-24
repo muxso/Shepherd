@@ -225,9 +225,18 @@ struct CaseResponse {
     tags: Vec<String>,
     custom_fields: BTreeMap<String, String>,
     steps: Vec<CaseStepDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    step_count: Option<i32>,
     created_by: Option<String>,
     created_at: String,
     updated_at: String,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+struct CaseOptionResponse {
+    id: String,
+    name: String,
+    module: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -262,6 +271,7 @@ impl From<FunctionalCase> for CaseResponse {
             tags: c.tags,
             custom_fields: c.custom_fields,
             steps: c.steps.into_iter().map(CaseStepDto::from).collect(),
+            step_count: None,
             created_by: c.created_by,
             created_at: c.created_at,
             updated_at: c.updated_at,
@@ -292,6 +302,7 @@ struct CaseBody {
 #[serde(rename_all = "camelCase")]
 struct ProjectQuery {
     project_id: String,
+    mode: Option<String>,
 }
 
 #[utoipa::path(post, path = "/functional-case", tag = "functional-case", request_body = CaseBody, responses((status = 201, body = CaseResponse), (status = 400), (status = 403)), security(("bearer" = [])))]
@@ -391,6 +402,45 @@ async fn list_cases(
 ) -> Response {
     if !user.can("FUNCTIONAL_CASE", "READ") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    match q.mode.as_deref() {
+        Some("options") => {
+            return match st.repo.list_options(&q.project_id).await {
+                Ok(rows) => Json(
+                    rows.into_iter()
+                        .map(|(id, name, module)| CaseOptionResponse { id, name, module })
+                        .collect::<Vec<_>>(),
+                )
+                .into_response(),
+                Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+            }
+        }
+        Some("summary" | "preview") => {
+            return match st
+                .repo
+                .list_summaries(&q.project_id, (q.mode.as_deref() == Some("preview")).then_some(40))
+                .await
+            {
+                Ok(rows) => Json(
+                    rows.into_iter()
+                        .map(|(case, count)| {
+                            let mut item = CaseResponse::from(case);
+                            item.step_count = Some(count);
+                            item
+                        })
+                        .collect::<Vec<_>>(),
+                )
+                .into_response(),
+                Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+            }
+        }
+        Some("count") => {
+            return match st.repo.count_by_project(&q.project_id).await {
+                Ok(count) => Json(serde_json::json!({"total":count})).into_response(),
+                Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+            }
+        }
+        _ => {}
     }
     match st.list.execute(&q.project_id).await {
         Ok(list) => {
@@ -751,7 +801,7 @@ fn rows_to_xlsx(rows: &[Vec<String>]) -> Result<Vec<u8>, rust_xlsxwriter::XlsxEr
         list_case_dependencies, add_case_dependency, remove_case_dependency
     ),
     components(schemas(
-        CaseBody, CaseResponse, ImportResult, CaseChangeDto, CaseBugDto, CaseReviewDto,
+        CaseBody, CaseResponse, CaseOptionResponse, ImportResult, CaseChangeDto, CaseBugDto, CaseReviewDto,
         CasePlanDto, CaseDependencyDto, DependencyBody
     )),
     tags((name = "functional-case", description = "Functional cases"))
@@ -834,6 +884,24 @@ mod tests {
             .await
             .expect("resp");
         assert_eq!(resp.status(), StatusCode::CREATED);
+
+        let options = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/functional-case?projectId=p1&mode=options")
+                    .header("authorization", format!("Bearer {t}"))
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert_eq!(options.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(options.into_body(), usize::MAX).await.expect("body");
+        let items: serde_json::Value = serde_json::from_slice(&body).expect("options JSON");
+        assert_eq!(items[0]["name"], "login success");
+        assert_eq!(items[0]["module"], "login");
+        assert_eq!(items[0].as_object().expect("option").len(), 3);
 
         let resp = app
             .oneshot(

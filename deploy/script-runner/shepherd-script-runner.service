@@ -1,0 +1,19 @@
+[Unit]
+Description=Shepherd shared script sandbox
+After=network-online.target
+
+[Service]
+Type=simple
+DynamicUser=yes
+EnvironmentFile=/etc/shepherd-script-runner.env
+ExecStart=/usr/bin/python3 -I /opt/shepherd-script-runner/server.py
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+MemoryMax=768M
+TasksMax=48
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

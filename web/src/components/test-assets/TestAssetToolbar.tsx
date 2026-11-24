@@ -1,5 +1,7 @@
 import { useCallback,useEffect,useState } from 'react'
-import { Alert,Button,Input,Modal,Segmented,Select,Space,Table } from 'antd'
+import { Button,Input,Modal,Segmented,Select,Space,Table } from 'antd'
+import { ApiError } from '../../api'
+import { AccessDenied, ReadError } from '../Page'
 import { message } from '../../feedback'
 import { assetApi,type TestAssets,type CaseAsset } from './api'
 import ServiceSettings from './ServiceSettings'
@@ -7,21 +9,37 @@ import SourceImport from './SourceImport'
 import DefinitionApiLinks from './DefinitionApiLinks'
 import './test-assets.css'
 export const emptyAssets:TestAssets={services:[],cases:[],mappings:[],scenarios:[],inventories:[],imports:[],permissions:{edit:false,manage:false,import:false}}
+function assetAccessHint(error: ApiError): string {
+ const fallback = '请联系管理员核对你在此项目中的服务资产访问权限。'
+ try {
+  const { requiredAccess } = JSON.parse(error.responseText)
+  if (requiredAccess === '项目成员') return '请联系项目管理员确认项目仍可访问，并将你的账号加入项目成员。'
+  if (typeof requiredAccess === 'string') return `请联系管理员授予「${requiredAccess}」权限。授权后请重新登录。`
+ } catch {
+  return fallback
+ }
+ return fallback
+}
 export function useTestAssets(projectId:string){
- const [result,setResult]=useState<{project:string;data:TestAssets}|null>(null),[revision,setRevision]=useState(0),[error,setError]=useState(''),[loading,setLoading]=useState(false)
+ const [result,setResult]=useState<{project:string;data:TestAssets}|null>(null),[revision,setRevision]=useState(0),[error,setError]=useState<unknown>(),[loading,setLoading]=useState(false)
  const reload=useCallback(()=>setRevision(v=>v+1),[])
- useEffect(()=>{if(!projectId)return;let live=true;setLoading(true);setError('');assetApi.overview(projectId).then(data=>{if(!Array.isArray(data.services)||!Array.isArray(data.cases))throw Error('服务资产响应不可用');if(live)setResult({project:projectId,data})}).catch(e=>{if(live)setError(e.message)}).finally(()=>{if(live)setLoading(false)});return()=>{live=false}},[projectId,revision])
+ useEffect(()=>{if(!projectId)return;let live=true;setLoading(true);setError(undefined);assetApi.overview(projectId).then(data=>{if(!Array.isArray(data.services)||!Array.isArray(data.cases))throw Error('服务资产响应不可用');if(live)setResult({project:projectId,data})}).catch(e=>{if(live){setResult(null);setError(e)}}).finally(()=>{if(live)setLoading(false)});return()=>{live=false}},[projectId,revision])
  return {data:result?.project===projectId?result.data:emptyAssets,error,loading,reload}
 }
-export default function TestAssetToolbar({projectId,data,error,view,onView,service,onService,onChanged}:{projectId:string;data:TestAssets;error:string;view:string;onView:(value:string)=>void;service:string;onService:(value:string)=>void;onChanged:()=>void}){
+export default function TestAssetToolbar({projectId,data,error,view,onView,service,onService,onChanged}:{projectId:string;data:TestAssets;error:unknown;view:string;onView:(value:string)=>void;service:string;onService:(value:string)=>void;onChanged:()=>void}){
  const [apiOpen,setApiOpen]=useState(false)
  const [settings,setSettings]=useState(false),[importing,setImporting]=useState(false),[assigning,setAssigning]=useState(false),[chosen,setChosen]=useState<string[]>([]),[target,setTarget]=useState<string|null>(null),[query,setQuery]=useState(''),[busy,setBusy]=useState(false)
  const filtered=data.cases.filter(c=>(!service||(service==='UNASSIGNED'?!c.serviceId:c.serviceId===service))&&(!query||`${c.name} ${c.library} ${c.directory}`.toLowerCase().includes(query.toLowerCase())))
  const assign=async()=>{setBusy(true);try{await assetApi.assign(projectId,chosen,target);setAssigning(false);setChosen([]);onChanged();message.success(`已更新 ${chosen.length} 条用例的服务归属`)}catch(e){message.error(String(e))}finally{setBusy(false)}}
+ if (error != null) return <div style={{ margin: '0 12px 8px' }}>
+    {error instanceof ApiError && error.status === 403
+      ? <AccessDenied title="没有查看服务资产的权限" description={assetAccessHint(error)} />
+      : <ReadError error={error} title="服务资产暂不可用" />}
+  </div>
  return <><div className="test-assets-toolbar">
   <Space wrap><Segmented aria-label="功能测试资产视角" value={view} onChange={v=>onView(String(v))} options={[{value:'definitions',label:'定义管理'},{value:'scenarios',label:'场景测试'}]}/><Select aria-label="功能用例服务" value={service} style={{width:220}} onChange={onService} options={[{value:'',label:'全部服务'},{value:'UNASSIGNED',label:'待归属'},...data.services.map(s=>({value:s.id,label:s.name}))]}/><span className="test-assets-note">{data.services.length} 个服务 · {data.cases.length.toLocaleString()} 条定义 · {data.scenarios.length} 个场景</span></Space>
   <Space wrap>{data.permissions.edit&&<Button onClick={()=>setApiOpen(true)}>定义与接口关联</Button>}{data.permissions.manage&&<><Button onClick={()=>{setAssigning(true);setChosen([]);setQuery('')}}>批量服务归属</Button><Button onClick={()=>setSettings(true)}>服务与接口梳理</Button></>}{data.permissions.import&&<Button onClick={()=>setImporting(true)}>同步与差异对账</Button>}</Space>
- </div>{error&&<Alert type="warning" title="服务资产暂不可用" description={error} showIcon style={{margin:'0 12px 8px'}}/>}
+ </div>
  <DefinitionApiLinks key={projectId+'api'} projectId={projectId} data={data} open={apiOpen} onClose={()=>setApiOpen(false)} onChanged={onChanged}/><ServiceSettings key={projectId} projectId={projectId} data={data} open={settings} onClose={()=>setSettings(false)} onChanged={onChanged}/><SourceImport key={projectId} projectId={projectId} open={importing} onClose={()=>setImporting(false)} onChanged={onChanged}/>
  <Modal title="批量指定用例的归属服务" open={assigning} onCancel={()=>setAssigning(false)} onOk={assign} confirmLoading={busy} okButtonProps={{disabled:!chosen.length}} width={1050} destroyOnHidden>
   <Space wrap style={{marginBottom:16}}><Select aria-label="批量归属目标服务" placeholder="选择目标服务" style={{width:270}} value={target} onChange={setTarget} options={[{value:null,label:'取消单独指定，沿用来源映射'},...data.services.map(s=>({value:s.id,label:s.name}))]}/><Input.Search aria-label="搜索服务归属用例" placeholder="名称、源测试库或目录" allowClear onSearch={setQuery} style={{width:320}}/><span>已选择 {chosen.length} 条</span></Space>

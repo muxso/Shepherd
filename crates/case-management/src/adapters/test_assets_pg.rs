@@ -80,7 +80,13 @@ impl AssetStore for PgAssetStore {
     }
 
     async fn authorize(&self, project: &str, user: &str, admin: bool) -> AssetResult<()> {
-        let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM ms_project p WHERE p.id=$1 AND NOT p.deleted AND ($3 OR EXISTS(SELECT 1 FROM ms_project_member m WHERE m.project_id=p.id AND m.user_id=$2)))").bind(project).bind(user).bind(admin).fetch_one(&self.0).await.map_err(db)?;
+        let exists: bool = sqlx::query_scalar("SELECT ms_has_project_access($1, $2, $3)")
+            .bind(project)
+            .bind(user)
+            .bind(admin)
+            .fetch_one(&self.0)
+            .await
+            .map_err(db)?;
         if exists {
             Ok(())
         } else {

@@ -1,10 +1,15 @@
+import { environmentPluginApi, type Profile } from '../plugins/environment/api'
+import ScenarioStepExpand from '../components/ScenarioStepExpand'
+import { stepDetails } from '../components/ScenarioStepDetails'
 import { splitProcessors } from '../plugins/environment/preparation'
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { Link, useSearchParams } from 'react-router-dom'
 import { AutoComplete, Button, Divider, Dropdown, Empty, Form, Input, Modal, Popover, Radio, Segmented, Select, Space, Switch, Table, Tabs, Tag, Tooltip, Typography, Upload } from 'antd'
 import ResizableDrawer from '../components/ResizableDrawer'
 import EditDrawer from '../components/EditDrawer'
+import CurlImportDrawer, { HTTP_METHODS } from '../components/CurlImportDrawer'
+import { copyToClipboard } from '../clipboard'
 import { message, modal } from '../feedback'
 import { PlayCircleOutlined, PlusOutlined, SaveOutlined, ThunderboltOutlined, DownOutlined, LinkOutlined, SwapOutlined, DeleteOutlined, FullscreenOutlined, CloseOutlined, SearchOutlined, FilterOutlined, ReloadOutlined, MoreOutlined, ImportOutlined, InboxOutlined, EyeOutlined, SettingOutlined, ShareAltOutlined, EditOutlined, StarFilled, StarOutlined } from '@ant-design/icons'
 import { api, ApiError, runEventsWsUrl, type ApiCase, type ApiDefinition, type ApiModule, type ApiView, type AssertionResult, type DebugResponse, type Environment, type ReportResultItem, type ResourcePool, type RunEvent, type Scenario, type ScenarioChange, type ScenarioExecution, type ScenarioRunResult, type ScenarioStep } from '../api'
@@ -16,13 +21,14 @@ import { ModuleTreePanel, inSelectedModule } from '../components/ModuleTreePanel
 import { columnSearch } from '../components/ListView'
 import AssertionEditor from '../components/AssertionEditor'
 import ProcessorEditor from '../components/ProcessorEditor'
+import ScriptActionEditor, { newScriptAction, scriptActionPayload } from '../components/ScriptActionEditor'
 import KVEditor, { type KVRow } from '../components/KVEditor'
 import { DebugResultPanel, type SentRequest } from '../components/ApiSpecPanel'
 import { LatencyStat } from '../components/TimingBreakdown'
 import { SelectProjectEmpty } from '../components/Page'
 import type { RegItem } from '../registry'
 import { fetchPlanItems, groupIdOf, isGroup } from '../components/plan/planLocal'
-import { ScenarioReportModal, fmtDuration, fmtSize, makeStepMeta, type NameOf, type TFn } from '../components/ScenarioReport'
+import { ScenarioReportModal, fmtDuration, fmtSize, makeStepMeta, pluginResultKey, type NameOf, type TFn } from '../components/ScenarioReport'
 import AutoPoolIndicator, { executedOnLabel } from '../components/AutoPoolIndicator'
 import { LiveElapsed } from '../components/LiveRunBadge'
 import { useI18n } from '../i18n'
@@ -196,12 +202,8 @@ export default function Scenarios() {
   }
   const shareView = async (v: ApiView) => {
     const url = `${window.location.origin}${window.location.pathname}?view=${encodeURIComponent(v.id)}`
-    try {
-      await navigator.clipboard?.writeText(url)
-      message.success(t('apidef.viewLinkCopied', '分享链接已复制'))
-    } catch {
-      message.info(url)
-    }
+    if (await copyToClipboard(url)) message.success(t('apidef.viewLinkCopied', '分享链接已复制'))
+    else modal.info({ title: '请手动复制链接', content: <Input readOnly value={url} onFocus={event => event.target.select()} /> })
   }
   const removeView = async (v: ApiView) => {
     try {
@@ -226,7 +228,7 @@ export default function Scenarios() {
   }, [views])
   useEffect(() => {
     load()
-    tabs.reset()
+    tabs.reset(searchParams.get('open') || undefined)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId])
 
@@ -861,7 +863,7 @@ function rawToStep(c: any): ScenarioStep {
   const base = { id: c?.id || `child-${kind}-${c?.refId || c?.url || Math.random().toString(36).slice(2)}`, order: 0, kind, refMode: 'REFERENCE' as const }
   if (kind === 'CASE') return { ...base, caseId: c.refId }
   if (kind === 'SCENARIO') return { ...base, scenarioId: c.refId }
-  if (kind === 'REQUEST') return { ...base, request: { method: c.method || 'GET', url: c.url || '', body: c.body ?? null, assertions: c.assertions } }
+  if (kind === 'REQUEST') return { ...base, request: { method: c.method || 'GET', url: c.url || '', body: c.body ?? null, assertions: c.assertions, processors: c.processors } }
   return { ...base, control: c }
 }
 
@@ -869,7 +871,7 @@ function childToNode(c: any, t: TFn, nameOf: NameOf): Node {
   const kind = String(c?.kind || '').toUpperCase()
   if (kind === 'CASE') return { kind, content: <span className="ms-mono">{t('scenario.caseRef', '用例')} {nameOf(c.refId)}</span>, raw: rawToStep(c) }
   if (kind === 'REQUEST')
-    return { kind, content: <Space><Tag color={methodColor(c.method || 'GET')}>{c.method || 'GET'}</Tag><span className="ms-mono">{c.url}</span></Space>, raw: rawToStep(c) }
+    return { kind, content: <Space><Tag className="ms-step-method">{c.method || 'GET'}</Tag><span className="ms-mono">{c.url}</span></Space>, raw: rawToStep(c) }
   return { ...controlToNode(kind, c, t, nameOf), raw: rawToStep(c) }
 }
 
@@ -879,27 +881,37 @@ function controlToNode(kind: string, payload: any, t: TFn, nameOf: NameOf): Node
   if (kind === 'LOOP') content = `${t('scenario.loopPrefix', '循环')} ${payload?.times ?? 1} ${t('scenario.loopSuffix', '次')}`
   else if (kind === 'IF') content = <span className="ms-mono">{payload?.variable} {payload?.operator} {payload?.value}</span>
   else if (kind === 'ONCE') content = t('scenario.onceOnly', '仅执行一次')
+  else if (kind === 'SCRIPT') content = <span>{payload?.mode === 'shared' ? `公共脚本 v${payload.revision}` : '自定义脚本'} · 输出 <code>{payload?.output}</code></span>
+  else if (kind === 'PLUGIN') content = <span>只读 SQL · 输出 <code>{payload?.output || '—'}</code></span>
   else if (kind === 'TIMER') content = `${t('scenario.waitPrefix', '等待')} ${payload?.ms ?? 0} ms`
-  return { kind, content, children: kind === 'TIMER' ? undefined : children }
+  return { kind, content, children: kind === 'TIMER' || kind === 'PLUGIN' ? undefined : children }
 }
 
 function stepToNode(s: ScenarioStep, t: TFn, nameOf: NameOf): Node {
-  if (s.request) return { kind: 'REQUEST', source: s.request.source || undefined, content: <Space><Tag color={methodColor(s.request.method)}>{s.request.method}</Tag><span className="ms-mono">{s.request.url}</span></Space> }
+  if (s.request) return { kind: 'REQUEST', source: s.request.source || undefined, content: <Space><Tag className="ms-step-method">{s.request.method}</Tag><span className="ms-mono">{s.request.url}</span></Space> }
   if (s.caseId) return { kind: 'CASE', content: <span className="ms-mono">{t('scenario.caseRef', '用例')} {nameOf(s.caseId)}</span> }
   if (s.scenarioId) return { kind: 'SCENARIO', source: s.refMode === 'COPY' ? 'COPY_SCENARIO' : undefined, content: <span className="ms-mono">{t('scenario.subScenario', '子场景')} {nameOf(s.scenarioId)}</span> }
   if (s.control) return controlToNode(s.kind.toUpperCase(), s.control, t, nameOf)
   return { kind: s.kind, content: '—' }
 }
 
-function StepRow({ node, idx, depth, t, result, running, liveSince, seq = 0, enabled = true, onToggle, onRun, actions, hovered, respPreview, expandable, expanded, onChildSelect, onChildDblClick }: { node: Node; idx: number; depth: number; t: TFn; result?: ReportResultItem; running?: boolean; liveSince?: number; seq?: number; enabled?: boolean; onToggle?: () => void; onRun?: () => void; actions?: React.ReactNode; hovered?: boolean; respPreview?: React.ReactNode; expandable?: boolean; expanded?: boolean; onChildSelect?: (raw: ScenarioStep, path: number[]) => void; onChildDblClick?: (raw: ScenarioStep, path: number[]) => void }) {
+function StepRow({ node, idx, depth, t, result, running, liveSince, seq = 0, enabled = true, onToggle, onRun, actions, hovered, respPreview, expandable, expanded, onExpand, detailFor, onInspect, onChildSelect, onChildDblClick }: { node: Node; idx: number; depth: number; t: TFn; result?: ReportResultItem; running?: boolean; liveSince?: number; seq?: number; enabled?: boolean; onToggle?: () => void; onRun?: () => void; actions?: React.ReactNode; hovered?: boolean; respPreview?: React.ReactNode; expandable?: boolean; expanded?: boolean; onExpand?: () => void; detailFor?: (step: ScenarioStep) => ReturnType<typeof stepDetails> | undefined; onInspect?: () => void; onChildSelect?: (raw: ScenarioStep, path: number[]) => void; onChildDblClick?: (raw: ScenarioStep, path: number[]) => void }) {
+  const [detailsOpen, setDetailsOpen] = useState(false)
+  const [childrenOpen, setChildrenOpen] = useState(true)
+  const groupOpen = expanded ?? childrenOpen
+  const detailAnchor = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (detailsOpen) detailAnchor.current?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+  }, [detailsOpen])
+  const details = node.raw && detailFor?.(node.raw)
   const copyLabels: Record<string, string> = {
     COPY_CASE: t('scenario.copyCaseTag', '复制用例'),
     COPY_API: t('scenario.copyApiTag', '复制API'),
     COPY_SCENARIO: t('scenario.copyScnTag', '复制场景'),
   }
   const meta = node.source
-    ? { label: copyLabels[node.source] || t('scenario.copyTag', '复制'), color: 'green' }
-    : makeStepMeta(t)[node.kind] || { label: node.kind, color: 'default' }
+    ? { label: copyLabels[node.source] || t('scenario.copyTag', '复制') }
+    : makeStepMeta(t)[node.kind] || { label: node.kind }
   const ok = result?.outcome === 'SUCCESS'
   const muted: React.CSSProperties = { color: 'var(--text-3)', fontSize: 12, whiteSpace: 'nowrap' }
   const leaf = depth === 0
@@ -908,7 +920,7 @@ function StepRow({ node, idx, depth, t, result, running, liveSince, seq = 0, ena
       <div
         style={{
           position: 'relative',
-          isolation: 'isolate', // own stacking context so the z-index:-1 progress fill sits above the row background but below content
+          isolation: 'isolate',
           overflow: 'hidden',
           display: 'flex',
           alignItems: 'center',
@@ -919,19 +931,19 @@ function StepRow({ node, idx, depth, t, result, running, liveSince, seq = 0, ena
           borderRadius: 6,
           marginBottom: 6,
           background: depth ? 'var(--panel-2)' : 'var(--panel)',
+          boxShadow: !running && result ? `inset 2px 0 0 var(--${ok ? 'success' : 'error'})` : undefined,
           opacity: enabled ? 1 : 0.5,
         }}
       >
-        {/* Run progress: row background fills left-to-right under the content. Blue while running, staggered by seq; green (pass) / red (fail) when done. */}
-        {running ? (
-          <span className={liveSince != null ? 'ms-step-fillbg live' : 'ms-step-fillbg run'} style={{ animationDelay: liveSince != null ? undefined : `${seq}s` }} />
-        ) : result ? (
-          <span className="ms-step-fillbg done" style={{ background: ok ? 'rgba(34,197,94,0.16)' : 'rgba(239,68,68,0.16)' }} />
-        ) : null}
-        {/* Expandable (sub-scenario/loop/if/once): fold arrow; leaf steps keep a spacer for alignment. */}
-        {expandable
-          ? <span style={{ color: 'var(--text-3)', fontSize: 11, width: 12, cursor: 'pointer' }}>{expanded ? '▾' : '▸'}</span>
-          : <span style={{ width: 12 }} />}
+        {running && <span className={liveSince != null ? 'ms-step-fillbg live' : 'ms-step-fillbg run'} style={{ animationDelay: liveSince != null ? undefined : `${seq}s` }} />}
+        <ScenarioStepExpand
+          expanded={expandable ? groupOpen : detailsOpen}
+          label={expandable ? (groupOpen ? '收起子步骤' : '展开子步骤') : (detailsOpen ? '收起用例明细' : '展开用例明细')}
+          onToggle={expandable ? (onExpand ?? (() => setChildrenOpen(!groupOpen))) : details ? (() => {
+            if (!detailsOpen) onInspect?.()
+            setDetailsOpen(!detailsOpen)
+          }) : undefined}
+        />
         <span style={{ color: 'var(--text-3)', cursor: 'grab' }}>⠿</span>
         {/* Enable/disable this step (disabled = dimmed); play = single-step server run. Both stop propagation so the drawer stays closed. */}
         <Switch size="small" checked={enabled} disabled={!leaf || !onToggle} onChange={() => onToggle?.()} onClick={(_c, e) => e.stopPropagation()} />
@@ -940,8 +952,8 @@ function StepRow({ node, idx, depth, t, result, running, liveSince, seq = 0, ena
           onClick={(e) => { e.stopPropagation(); if (leaf) onRun?.() }}
         />
         <span style={{ color: 'var(--text-3)', fontSize: 12, minWidth: 18 }}>{idx}</span>
-        <Tag color={meta.color} style={{ margin: 0 }}>{meta.label}</Tag>
-        <span style={{ flex: 1, minWidth: 0 }}>{node.content}</span>
+        <Tag className="ms-step-kind">{meta.label}</Tag>
+        <span style={{ flex: 1, minWidth: 0 }}>{node.content}{details?.badge && <span className="ms-step-detail-label">{details.badge}</span>}</span>
         {/* Live mode: elapsed time counts up while this step executes. */}
         {running && liveSince != null && <LiveElapsed since={liveSince} />}
         {/* Per-step result after a run (ref #28): pass / status / latency / size.
@@ -949,8 +961,8 @@ function StepRow({ node, idx, depth, t, result, running, liveSince, seq = 0, ena
         {!running && result && (() => {
           const cluster = (
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }} onClick={(e) => e.stopPropagation()}>
-              <Tag color={ok ? 'green' : 'red'} style={{ margin: 0 }}>{ok ? t('scenario.pass', '通过') : t('scenario.fail', '失败')}</Tag>
-              {result.statusCode != null && <Tooltip title={t('scenario.statusTip', '服务端返回的 HTTP 状态码')}><span style={muted}>{t('apidef.statusCode', '状态码')} <span style={{ color: result.statusCode < 400 ? 'var(--success)' : 'var(--error)' }}>{result.statusCode}</span></span></Tooltip>}
+              <Tag className={`ms-step-outcome ${ok ? 'is-success' : 'is-failure'}`}>{ok ? t('scenario.pass', '通过') : t('scenario.fail', '失败')}</Tag>
+              {(result.statusCode ?? 0) > 0 && <Tooltip title={t('scenario.statusTip', '服务端返回的 HTTP 状态码')}><span style={muted}>{t('apidef.statusCode', '状态码')} <span style={{ color: (result.statusCode ?? 0) < 400 ? 'var(--text-2)' : 'var(--error)' }}>{result.statusCode}</span></span></Tooltip>}
               {result.timings ? (
                 <LatencyStat totalMs={result.latencyMs ?? 0} timings={result.timings}>
                   <span style={muted}>{t('scenario.respTime', '响应时间')} {result.latencyMs != null ? fmtDuration(result.latencyMs) : '—'}</span>
@@ -975,8 +987,11 @@ function StepRow({ node, idx, depth, t, result, running, liveSince, seq = 0, ena
           </span>
         )}
       </div>
+      {detailsOpen && details && <div ref={detailAnchor} style={{ marginInlineStart: depth * 24 + 14 }} onClick={(event) => event.stopPropagation()} onDoubleClick={(event) => event.stopPropagation()}>
+        {details.content}
+      </div>}
       {/* Children render only when expanded; clicking one opens the drawer (raw step bubbled via onChildSelect). */}
-      {expanded && node.children?.map((c, i) => (
+      {groupOpen && expandable && node.children?.map((c, i) => (
         <div
           key={i}
           onClick={(e) => { if (c.raw && onChildSelect) { e.stopPropagation(); onChildSelect(c.raw, [i]) } }}
@@ -994,7 +1009,8 @@ function StepRow({ node, idx, depth, t, result, running, liveSince, seq = 0, ena
             onChildSelect={onChildSelect && ((raw, p) => onChildSelect(raw, [i, ...p]))}
             onChildDblClick={onChildDblClick && ((raw, p) => onChildDblClick(raw, [i, ...p]))}
             expandable={(c.children?.length ?? 0) > 0}
-            expanded
+            detailFor={detailFor}
+            onInspect={onInspect}
           />
         </div>
       ))}
@@ -1088,9 +1104,10 @@ function ScenarioDetail({ scenario, active }: { scenario: Scenario; active?: boo
   const slot = useWorkspaceExtraSlot()
   const [steps, setSteps] = useState<ScenarioStep[]>([])
   const [running, setRunning] = useState(false)
+  const [editPlugin, setEditPlugin] = useState<ScenarioStep | null>(null)
   const [add, setAdd] = useState<string>('') // which add-step form is open
   const [importOpen, setImportOpen] = useState(false)
-  const [customReqOpen, setCustomReqOpen] = useState(false)
+  const [customReqMode, setCustomReqMode] = useState<'REQUEST' | 'CURL' | null>(null)
   // Only non-reference steps are editable: inline custom requests (REQUEST kind).
   // Referenced cases/sub-scenarios stay read-only in the detail drawer.
   const [editReqStep, setEditReqStep] = useState<ScenarioStep | null>(null)
@@ -1116,6 +1133,30 @@ function ScenarioDetail({ scenario, active }: { scenario: Scenario; active?: boo
   // Run config: environment + step failure rule (backend run accepts environment_id/failure_strategy).
   const [envs, setEnvs] = useState<Environment[]>([])
   const [envId, setEnvId] = useState<string>('')
+  const [profiles, setProfiles] = useState<Record<string, Profile>>({})
+  const [showHistory, setShowHistory] = useState(false)
+  const [latestResults, setLatestResults] = useState<Record<string, ReportResultItem>>({})
+  useEffect(() => {
+    let current = true
+    setProfiles({})
+    if (envId) environmentPluginApi.configuration(envId).then(config => {
+      if (current) setProfiles(Object.fromEntries(config.profiles.map(profile => [profile.id, profile])))
+    }).catch(() => {})
+    return () => { current = false }
+  }, [envId])
+  useEffect(() => {
+    if (!showHistory) return
+    let current = true
+    setLatestResults({})
+    api.scenarioExecutions(scenario.id).then(history => {
+      const latest = history.items.find(run => run.reportId && run.status !== 'RUNNING')
+      return latest?.reportId ? api.scenarioReport(latest.reportId) : undefined
+    }).then(report => {
+      if (current && report) setLatestResults(Object.fromEntries(report.results.map(result => [result.caseId, result])))
+    }).catch(() => {})
+    return () => { current = false }
+  }, [scenario.id, showHistory])
+
   const [failureStrategy, setFailureStrategy] = useState<'CONTINUE' | 'STOP'>('CONTINUE')
   // Live run state (async run + WS events): per-leaf running flag + start time for the count-up.
   const [liveMode, setLiveMode] = useState(false)
@@ -1159,7 +1200,7 @@ function ScenarioDetail({ scenario, active }: { scenario: Scenario; active?: boo
     }
   }
   // Resolve reference names; fall back to the first 8 chars of the id instead of full UUIDs.
-  const nameOf = (id: string) => nameMap[id] || (id ? id.slice(0, 8) : '—')
+  const nameOf = (id: string) => nameMap[id] || (id ? '引用名称暂不可用' : '—')
 
   const loadSteps = async () => {
     try {
@@ -1169,26 +1210,38 @@ function ScenarioDetail({ scenario, active }: { scenario: Scenario; active?: boo
       message.error(e instanceof ApiError ? e.message : t('scenario.loadStepsFailed', '加载步骤失败'))
     }
   }
-  const loadReferenced = () =>
-    // Load project cases + scenarios to build the id-to-name map for step display; load environments for run selection.
-    Promise.all([
-      api.projectCasesAll(scenario.projectId).catch(() => []),
-      api.scenarios(scenario.projectId).then((s) => s).catch(() => []),
-      api.environments(scenario.projectId).then((e) => (Array.isArray(e) ? e : [])).catch(() => []),
-      api.modules(scenario.projectId).then((mm) => (Array.isArray(mm) ? mm : [])).catch(() => []),
-    ]).then(([cases, scns, environments, mods]) => {
-      const m: Record<string, string> = {}
-      const cm: Record<string, ApiCase> = {}
-      cases.forEach((c) => { m[c.id] = `${c.method} ${c.name}`; cm[c.id] = c })
-      scns.forEach((s) => (m[s.id] = s.name))
-      setNameMap(m)
-      setCaseMap(cm)
+  const loadReferenced = () => Promise.all([
+    api.scenarios(scenario.projectId).then(scns => {
+      setNameMap(current => ({ ...current, ...Object.fromEntries(scns.map(s => [s.id, s.name])) }))
+    }).catch(() => {}),
+    api.environments(scenario.projectId).then(environments => {
       setEnvs(environments)
-      // Prefer the saved scenario environment (meta.envId); otherwise the first enabled one.
       const savedEnvId = scenario.meta?.envId as string | undefined
-      setEnvId((cur) => cur || (savedEnvId && environments.some((e) => e.id === savedEnvId) ? savedEnvId : environments.find((e) => e.enabled !== false)?.id || ''))
-      setModules(mods)
-    })
+      setEnvId(cur => cur || (savedEnvId && environments.some(e => e.id === savedEnvId)
+        ? savedEnvId : environments.find(e => e.enabled !== false)?.id || ''))
+    }).catch(() => setEnvs([])),
+    api.modules(scenario.projectId).then(setModules).catch(() => setModules([])),
+  ])
+  useEffect(() => {
+    const ids = new Set<string>()
+    function collect(step: ScenarioStep) {
+      if (step.caseId) ids.add(step.caseId)
+      const children = (step.control as { children?: unknown[] } | undefined)?.children
+      if (Array.isArray(children)) children.forEach(child => collect(rawToStep(child)))
+    }
+    steps.forEach(collect)
+    Object.values(subSteps).flat().forEach(collect)
+    const cases = [...ids]
+    let live = true
+    for (let start = 0; start < cases.length; start += 100) {
+      api.referencedApiCases(scenario.projectId, cases.slice(start, start + 100)).then(found => {
+        if (!live) return
+        setCaseMap(current => ({ ...current, ...Object.fromEntries(found.map(c => [c.id, c])) }))
+        setNameMap(current => ({ ...current, ...Object.fromEntries(found.map(c => [c.id, `${c.method} ${c.name}`])) }))
+      }).catch(() => {})
+    }
+    return () => { live = false }
+  }, [scenario.projectId, steps, subSteps])
   useEffect(() => {
     loadSteps()
     loadReferenced()
@@ -1299,7 +1352,12 @@ function ScenarioDetail({ scenario, active }: { scenario: Scenario; active?: boo
     }
   }
   // Step to result key: CASE uses case_id; REQUEST uses "METHOD url" (matches the executor label).
-  const stepKey = (s: ScenarioStep): string | null => (s.caseId ? s.caseId : s.request ? `${s.request.method} ${s.request.url}` : null)
+  const stepKey = (s: ScenarioStep): string | null => (s.caseId ? s.caseId : s.request ? `${s.request.method} ${s.request.url}` : ['PLUGIN', 'SCRIPT'].includes(s.kind) ? pluginResultKey(s.control, s.kind) : null)
+  const detailFor = (s: ScenarioStep) => {
+    const request = s.caseId ? caseMap[s.caseId] : s.request
+    const key = stepKey(s)
+    return request ? stepDetails(request, profiles, key ? stepResults[key] ?? latestResults[key] : undefined) : undefined
+  }
   // Top-level sub-scenario/controller steps have no result of their own (reports only contain leaves); collect descendant leaf keys.
   const collectLeafKeys = (s: ScenarioStep): string[] => {
     const k = stepKey(s)
@@ -1331,7 +1389,7 @@ function ScenarioDetail({ scenario, active }: { scenario: Scenario; active?: boo
     const req = buildStepRequest(reqInfo.method, reqInfo.url, reqInfo.body, reqInfo.headers, reqInfo.auth as { type: string; token?: string } | undefined, env)
     if (!req) return message.warning(t('editor.needEnvOrAbs', '相对路径需先选择带 baseUrl 的环境,或填写绝对 URL(http(s)://)'))
     try {
-      const resp = await api.debugSend({ ...req, environmentId: env?.id, baseUrl: env?.baseUrl, variables: env?.variables, ...splitProcessors(reqInfo.processors as unknown[]), assertions: reqInfo.assertions as unknown[] })
+      const resp = await api.debugSend({ ...req, projectId: scenario.projectId, environmentId: env?.id, baseUrl: env?.baseUrl, variables: env?.variables, ...splitProcessors(reqInfo.processors as unknown[]), assertions: reqInfo.assertions as unknown[] })
       const fails = (resp.assertions || []).filter((a) => !a.passed)
       setStepResults((prev) => ({ ...prev, [k]: { caseId: k, outcome: fails.length ? 'ERROR' : 'SUCCESS', failures: fails.map((a) => a.reason || a.item), executedAt: '', statusCode: resp.status, latencyMs: resp.latencyMs, respSize: resp.body.length, body: resp.body, headers: resp.headers } }))
     } catch (e) {
@@ -1381,7 +1439,7 @@ function ScenarioDetail({ scenario, active }: { scenario: Scenario; active?: boo
   const startInsert = (key: string, at: number) => {
     setPendingInsert({ at, before: steps.map((s) => s.id) })
     if (key === 'IMPORT') setImportOpen(true)
-    else if (key === 'REQUEST') setCustomReqOpen(true)
+    else if ((key === 'REQUEST' || key === 'CURL')) setCustomReqMode(key)
     else setAdd(key)
   }
   const removeStep = async (s: ScenarioStep) => {
@@ -1398,13 +1456,14 @@ function ScenarioDetail({ scenario, active }: { scenario: Scenario; active?: boo
     { type: 'group' as const, label: t('scenario.grpRequest', '请求 / 场景'), children: [
       { key: `IMPORT@${at}`, label: t('scenario.importSystem', '导入系统请求') },
       { key: `REQUEST@${at}`, label: t('scenario.customRequest', '自定义请求') },
+      { key: `CURL@${at}`, label: t('apidef.importCurl', '导入 cURL') },
     ] },
     { type: 'group' as const, label: t('scenario.grpLogic', '逻辑控制'), children: [
       { key: `LOOP@${at}`, label: t('scenario.stepLoop', '循环控制器') },
       { key: `IF@${at}`, label: t('scenario.stepIf', '条件控制器') },
       { key: `ONCE@${at}`, label: t('scenario.stepOnce', '仅一次控制器') },
     ] },
-    { type: 'group' as const, label: t('scenario.grpOther', '其他'), children: [{ key: `TIMER@${at}`, label: t('scenario.stepTimer', '等待时间') }] },
+    { type: 'group' as const, label: t('scenario.grpOther', '其他'), children: [{ key: `TIMER@${at}`, label: t('scenario.stepTimer', '等待时间') }, { key: `PLUGIN@${at}`, label: t('scenario.stepPlugin', '插件操作') }, { key: `SCRIPT@${at}`, label: '脚本步骤' }] },
   ]
   // Inline insert pick (key is "KIND@at").
   const onInsertPick = (key: string) => {
@@ -1450,9 +1509,10 @@ function ScenarioDetail({ scenario, active }: { scenario: Scenario; active?: boo
         menu={{
           items: [
             { key: 'copy', label: t('a.copy', '复制') },
+            ...(['PLUGIN','SCRIPT'].includes(s.kind) ? [{ key: 'editPlugin', label: t('a.edit', '编辑') }] : []),
             { key: 'delete', label: t('a.delete', '删除'), danger: true },
           ],
-          onClick: ({ key, domEvent }) => { domEvent.stopPropagation(); if (key === 'delete') removeStep(s); else copyStep(s, i) },
+          onClick: ({ key, domEvent }) => { domEvent.stopPropagation(); if (key === 'delete') removeStep(s); else if (key === 'editPlugin') setEditPlugin(s); else copyStep(s, i) },
         }}
       >
         <Button type="text" size="small" title={t('a.more', '更多')} icon={<MoreOutlined />} />
@@ -1546,8 +1606,8 @@ function ScenarioDetail({ scenario, active }: { scenario: Scenario; active?: boo
               {lastRunAt && <span>{t('scenario.execTime', '执行时间')} <span style={{ color: 'var(--text)' }}>{lastRunAt}</span></span>}
               <span>
                 {t('scenario.execResult', '执行结果')}
-                <span style={{ color: '#22c55e', marginLeft: 8 }}>{t('scenario.runSuccess', '成功')} {passN}</span>
-                <span style={{ color: failN ? '#ef4444' : '#8a9099', marginLeft: 8 }}>{t('scenario.runError', '失败')} {failN}</span>
+                <span style={{ color: 'var(--success)', marginLeft: 8 }}>{t('scenario.runSuccess', '成功')} {passN}</span>
+                <span style={{ color: failN ? 'var(--error)' : '#8a9099', marginLeft: 8 }}>{t('scenario.runError', '失败')} {failN}</span>
                 <span style={{ color: 'var(--text-3)', marginLeft: 8 }}>{t('scenario.falsePos', '误报')} 0</span>
               </span>
               <Button type="link" size="small" icon={<EyeOutlined />} style={{ padding: 0 }} onClick={() => setReportModalId(lastRun.reportId)}>{t('scenario.viewReport', '查看报告')}</Button>
@@ -1567,7 +1627,7 @@ function ScenarioDetail({ scenario, active }: { scenario: Scenario; active?: boo
           const rowRunning = running && (liveMode ? liveKeys.length > 0 : true)
           const liveSince = rowRunning && liveKeys.length ? Math.min(...liveKeys.map((k) => liveSteps[k].startedAt)) : undefined
           // Sub-scenario: once expanded, inject its steps as children (with results so child rows show green/red); controllers get children from their payload.
-          const node = stepToNode(s, t, nameOf)
+          const node = { ...stepToNode(s, t, nameOf), raw: s }
           if (s.scenarioId && subSteps[s.scenarioId]) {
             node.children = subSteps[s.scenarioId].map((cs) => ({ ...stepToNode(cs, t, nameOf), raw: cs, result: resultFor(cs) }))
           }
@@ -1608,6 +1668,9 @@ function ScenarioDetail({ scenario, active }: { scenario: Scenario; active?: boo
                 respPreview={hasResp ? <StepRespPreview r={res!} t={t} /> : undefined}
                 expandable={expandable}
                 expanded={isExpanded}
+                onExpand={() => toggleExpand(s)}
+                detailFor={detailFor}
+                onInspect={() => setShowHistory(true)}
                 onChildSelect={(raw, path) => setSelStep({ step: raw, idx: (path[path.length - 1] ?? 0) + 1, child: true })}
                 onChildDblClick={(raw, path) => openChildEdit(s, path, raw)}
               />
@@ -1622,22 +1685,25 @@ function ScenarioDetail({ scenario, active }: { scenario: Scenario; active?: boo
               { type: 'group', label: t('scenario.grpRequest', '请求 / 场景'), children: [
                 { key: 'IMPORT', label: t('scenario.importSystem', '导入系统请求') },
                 { key: 'REQUEST', label: t('scenario.customRequest', '自定义请求') },
+                { key: 'CURL', label: t('apidef.importCurl', '导入 cURL') },
               ] },
               { type: 'group', label: t('scenario.grpLogic', '逻辑控制'), children: [
                 { key: 'LOOP', label: t('scenario.stepLoop', '循环控制器') },
                 { key: 'IF', label: t('scenario.stepIf', '条件控制器') },
                 { key: 'ONCE', label: t('scenario.stepOnce', '仅一次控制器') },
               ] },
-              { type: 'group', label: t('scenario.grpOther', '其他'), children: [{ key: 'TIMER', label: t('scenario.stepTimer', '等待时间') }] },
+              { type: 'group', label: t('scenario.grpOther', '其他'), children: [{ key: 'TIMER', label: t('scenario.stepTimer', '等待时间') }, { key: 'PLUGIN', label: t('scenario.stepPlugin', '插件操作') }, { key: 'SCRIPT', label: '脚本步骤' }] },
             ],
-            onClick: ({ key }) => { if (key === 'IMPORT') setImportOpen(true); else if (key === 'REQUEST') setCustomReqOpen(true); else setAdd(key) },
+            onClick: ({ key }) => { if (key === 'IMPORT') setImportOpen(true); else if ((key === 'REQUEST' || key === 'CURL')) setCustomReqMode(key); else setAdd(key) },
           }}
         >
           <Button type="dashed" icon={<PlusOutlined />} block>{t('scenario.addStep', '添加步骤')}</Button>
         </Dropdown>
       </div>
-      <AddStepModal type={add} scenarioId={scenario.id} projectId={scenario.projectId} nextOrder={nextOrder} onClose={() => setAdd('')} onAdded={onAdded} />
-      <CustomRequestDrawer open={customReqOpen} scenarioId={scenario.id} nextOrder={nextOrder} env={envs.find((e) => e.id === envId)} onClose={() => setCustomReqOpen(false)} onAdded={onAdded} />
+      <AddStepModal type={editPlugin?.kind || add} editPlugin={editPlugin} envId={envId} scenarioId={scenario.id} projectId={scenario.projectId} nextOrder={nextOrder}
+        onClose={() => { setAdd(''); setEditPlugin(null) }}
+        onAdded={() => { setEditPlugin(null); void onAdded() }} />
+      <CustomRequestDrawer open={customReqMode !== null} importCurlOnOpen={customReqMode === 'CURL'} scenarioId={scenario.id} nextOrder={nextOrder} env={envs.find((e) => e.id === envId)} onClose={() => setCustomReqMode(null)} onAdded={onAdded} />
       <CustomRequestDrawer open={!!editReqStep} editStep={editReqStep} scenarioId={scenario.id} nextOrder={nextOrder} env={envs.find((e) => e.id === envId)} onClose={() => setEditReqStep(null)} onAdded={onAdded} />
       <CustomRequestDrawer open={!!editChild} editStep={editChild?.step} editChild={editChild} scenarioId={scenario.id} nextOrder={nextOrder} env={envs.find((e) => e.id === envId)} onClose={() => setEditChild(null)} onAdded={onAdded} />
       <ImportRequestDrawer open={importOpen} scenarioId={scenario.id} projectId={scenario.projectId} nextOrder={nextOrder} onClose={() => setImportOpen(false)} onImported={onAdded} />
@@ -1655,7 +1721,7 @@ function ScenarioDetail({ scenario, active }: { scenario: Scenario; active?: boo
         <Space direction="vertical" size={20} style={{ width: '100%' }}>
           <div>
             <Typography.Text strong>{t('apidef.preProcessors', '前置')}</Typography.Text>
-            <div style={{ marginTop: 8 }}><ProcessorEditor value={form.preProcessors as Record<string, unknown>[]} onChange={(v) => patchForm({ preProcessors: v })} allowed={['wait', 'plugin']} /></div>
+            <div style={{ marginTop: 8 }}><ProcessorEditor environmentId={envId} value={form.preProcessors as Record<string, unknown>[]} onChange={(v) => patchForm({ preProcessors: v })} allowed={['wait', 'plugin']} /></div>
           </div>
           <div>
             <Typography.Text strong>{t('apidef.postProcessors', '后置')}</Typography.Text>
@@ -1671,7 +1737,7 @@ function ScenarioDetail({ scenario, active }: { scenario: Scenario; active?: boo
   ]
 
   return (
-    <div style={{ padding: '12px 16px', height: '100%', overflow: 'auto' }}>
+    <div className="ms-scenario-scroll">
       {/* Toolbar (environment + server run + save) portaled into the tab-bar right slot; rendered only for the active tab. */}
       {active && slot && createPortal(
         <ScenarioActionBar
@@ -1697,15 +1763,14 @@ function ScenarioDetail({ scenario, active }: { scenario: Scenario; active?: boo
           <span style={{ fontWeight: 600, fontSize: 15, color: 'var(--text)' }}>{form.name}</span>
           {form.tags.map((tg) => <Tag key={tg} style={{ margin: 0 }}>{tg}</Tag>)}
           <Tooltip title={t('scenario.copyLink', '复制链接')}>
-            <LinkOutlined
-              style={{ color: 'var(--text-3)', cursor: 'pointer' }}
-              onClick={async () => {
-                const url = `${window.location.origin}${window.location.pathname}?scenario=${encodeURIComponent(scenario.id)}`
-                try {
-                  await navigator.clipboard?.writeText(url)
+            <Button type="text" size="small" icon={<LinkOutlined />} aria-label={t('scenario.copyLink', '复制链接')}
+              onClick={async event => {
+                const url = new URL(window.location.pathname, window.location.origin)
+                url.searchParams.set('open', scenario.id)
+                if (await copyToClipboard(url.href, event.currentTarget.closest<HTMLElement>('[role="dialog"]'))) {
                   message.success(t('scenario.linkCopied', '链接已复制'))
-                } catch {
-                  message.info(url)
+                } else {
+                  modal.info({ title: '请手动复制链接', content: <Input readOnly value={url.href} onFocus={inputEvent => inputEvent.target.select()} /> })
                 }
               }}
             />
@@ -1716,6 +1781,7 @@ function ScenarioDetail({ scenario, active }: { scenario: Scenario; active?: boo
       <StepDetailDrawer
         sel={selStep}
         scenarioId={scenario.id}
+        projectId={scenario.projectId}
         caseMap={caseMap}
         nameOf={nameOf}
         env={envs.find((e) => e.id === envId)}
@@ -1747,6 +1813,7 @@ function buildStepRequest(method: string, url: string, body: string | null | und
 function StepDetailDrawer({
   sel,
   scenarioId,
+  projectId,
   caseMap,
   nameOf,
   env,
@@ -1757,6 +1824,7 @@ function StepDetailDrawer({
 }: {
   sel: { step: ScenarioStep; idx: number } | null
   scenarioId: string
+  projectId: string
   caseMap: Record<string, ApiCase>
   nameOf: NameOf
   env?: Environment
@@ -1773,6 +1841,20 @@ function StepDetailDrawer({
   const [replaceOpen, setReplaceOpen] = useState(false)
   const [replaceSel, setReplaceSel] = useState<string>()
   const [replacing, setReplacing] = useState(false)
+  const [replacementCases, setReplacementCases] = useState<ApiCase[] | null>(null)
+  useEffect(() => {
+    if (!replaceOpen) return
+    let live = true
+    setReplacementCases(null)
+    api.projectCasesAll(projectId)
+      .then(cases => { if (live) setReplacementCases(cases) })
+      .catch(() => {
+        if (!live) return
+        setReplacementCases([])
+        message.error(t('scenario.loadCasesFailed', '加载用例失败'))
+      })
+    return () => { live = false }
+  }, [projectId, replaceOpen, t])
   const doReplace = async () => {
     if (!sel || !replaceSel) return message.warning(t('scenario.pickReplaceCase', '请选择用例'))
     setReplacing(true)
@@ -1865,7 +1947,7 @@ function StepDetailDrawer({
     setLastReq(req)
     setRunning(true); setErr(''); setResp(null)
     try {
-      setResp(await api.debugSend({ ...req, environmentId: env?.id, baseUrl: env?.baseUrl, variables: env?.variables, ...splitProcessors(reqInfo.processors as unknown[]), assertions: reqInfo.assertions as unknown[] }))
+      setResp(await api.debugSend({ ...req, projectId, environmentId: env?.id, baseUrl: env?.baseUrl, variables: env?.variables, ...splitProcessors(reqInfo.processors as unknown[]), assertions: reqInfo.assertions as unknown[] }))
     } catch (e) {
       setErr(e instanceof ApiError ? e.message : t('editor.sendFail', '发送失败'))
     } finally {
@@ -1876,7 +1958,7 @@ function StepDetailDrawer({
   const title = (
     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
       <span style={{ color: 'var(--text-3)', fontSize: 12 }}>{sel?.idx}</span>
-      {meta && <Tag color={meta.color} style={{ margin: 0 }}>{meta.label}</Tag>}
+      {meta && <Tag className="ms-step-kind">{meta.label}</Tag>}
       <span style={{ fontWeight: 600 }}>{kase ? kase.name : step?.scenarioId ? nameOf(step.scenarioId) : step?.request?.url || meta?.label}</span>
     </div>
   )
@@ -1960,7 +2042,8 @@ function StepDetailDrawer({
           optionFilterProp="label"
           value={replaceSel}
           onChange={setReplaceSel}
-          options={Object.values(caseMap)
+          loading={replacementCases === null}
+          options={(replacementCases ?? [])
             .filter((c) => c.id !== step?.caseId)
             .map((c) => ({ value: c.id, label: `${c.method} ${c.name}` }))}
         />
@@ -2029,13 +2112,27 @@ function ScenarioParams({ params, onChange, csv, onCsvChange }: { params: Scenar
         style={{ marginBottom: 12 }}
       />
       {mode === 'csv' ? (
+        <Space direction="vertical" style={{ width: '100%' }}>
+          <Upload accept=".csv,text/csv" showUploadList={false} beforeUpload={async file => {
+            try {
+              const text = new TextDecoder('utf-8', { fatal: true }).decode(await file.arrayBuffer())
+              onCsvChange(text)
+            } catch {
+              message.error('无法读取 CSV，请使用 UTF-8 编码')
+            }
+            return Upload.LIST_IGNORE
+          }}>
+            <Button size="small" icon={<ImportOutlined />}>导入 CSV 文件</Button>
+          </Upload>
         <Input.TextArea
           rows={10}
           value={csv}
           onChange={(e) => onCsvChange(e.target.value)}
           placeholder={'name,age\nadmin,20\nguest,18'}
           className="ms-mono"
+          aria-label="CSV 参数内容"
         />
+        </Space>
       ) : (
       <>
       <Table<ScenarioParam & { _i: number }>
@@ -2188,6 +2285,7 @@ type StepBody = { kind: string; order: number; refId?: string; refMode?: string;
 // + server run + response. The backend supports the full inline request spec.
 function CustomRequestDrawer({
   open,
+  importCurlOnOpen = false,
   scenarioId,
   nextOrder,
   env,
@@ -2198,6 +2296,7 @@ function CustomRequestDrawer({
   editChild,
 }: {
   open: boolean
+  importCurlOnOpen?: boolean
   scenarioId: string
   nextOrder: number
   env?: Environment
@@ -2211,13 +2310,17 @@ function CustomRequestDrawer({
   editChild?: { parent: ScenarioStep; path: number[] } | null
 }) {
   const { t } = useI18n()
+  const { projectId } = useApp()
   const blankKv = (): KVRow => ({ key: '', value: '' })
+  const [curlOpen, setCurlOpen] = useState(false)
   const [method, setMethod] = useState('GET')
   const [url, setUrl] = useState('')
   const [headers, setHeaders] = useState<KVRow[]>([blankKv()])
   const [query, setQuery] = useState<KVRow[]>([blankKv()])
   const [rest, setRest] = useState<KVRow[]>([blankKv()])
   const [body, setBody] = useState('')
+  const [requestTab, setRequestTab] = useState<string>()
+  const [fieldAdditions, setFieldAdditions] = useState({ post: 0, assert: 0 })
   const [authType, setAuthType] = useState<'none' | 'bearer' | 'basic'>('none')
   const [authToken, setAuthToken] = useState('')
   const [assertions, setAssertions] = useState<unknown[]>([{ type: 'StatusIs', args: 200 }])
@@ -2235,15 +2338,20 @@ function CustomRequestDrawer({
     const kv = (rows?: { key: string; value: string }[]): KVRow[] => (rows?.length ? rows.map((x) => ({ key: x.key, value: x.value })) : [blankKv()])
     setMethod(r?.method || 'GET'); setUrl(r?.url || ''); setHeaders(kv(r?.headers)); setQuery(kv(r?.queryParams)); setRest(kv(r?.restParams))
     setBody(r?.body || '')
+    setRequestTab(undefined)
     setAuthType(r?.auth?.type === 'bearer' || r?.auth?.type === 'basic' ? r.auth.type : 'none'); setAuthToken(r?.auth?.token || '')
     setAssertions(r ? (Array.isArray(r.assertions) ? r.assertions : []) : [{ type: 'StatusIs', args: 200 }])
     // Split stored processors by args.phase; legacy entries without a phase land in the post tab.
     const stored = (r?.processors?.length ? r.processors : []) as { args?: { phase?: string } }[]
     setPre(stored.filter((p) => p?.args?.phase === 'pre'))
     setPost(stored.filter((p) => p?.args?.phase !== 'pre'))
+    setFieldAdditions({ post: 0, assert: 0 })
     setResp(null); setErr(''); setLastReq(null)
   }
-  useEffect(() => { if (open) reset() }, [open, editStep?.id]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (open) reset()
+    setCurlOpen(open && importCurlOnOpen)
+  }, [open, importCurlOnOpen, editStep?.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const clean = (rows: KVRow[]) => rows.filter((r) => r.key.trim())
   const authObj = () => (authType === 'none' ? undefined : { type: authType, token: authToken })
@@ -2275,7 +2383,7 @@ function CustomRequestDrawer({
     if (!req) return message.warning(t('editor.needEnvOrAbs', '相对路径需先选择带 baseUrl 的环境,或填写绝对 URL(http(s)://)'))
     setLastReq(req); setRunning(true); setErr(''); setResp(null)
     try {
-      setResp(await api.debugSend({ ...req, environmentId: env?.id, baseUrl: env?.baseUrl, variables: env?.variables, preProcessors: pre, processors: post, query: clean(query), assertions: assertions as unknown[] }))
+      setResp(await api.debugSend({ ...req, projectId, environmentId: env?.id, baseUrl: env?.baseUrl, variables: env?.variables, preProcessors: pre, processors: post, query: clean(query), assertions: assertions as unknown[] }))
     } catch (e) {
       setErr(e instanceof ApiError ? e.message : t('editor.sendFail', '发送失败'))
     } finally {
@@ -2333,9 +2441,9 @@ function CustomRequestDrawer({
     { key: 'body', label: t('apidef.requestBody', '请求体'), children: <Input.TextArea rows={8} value={body} onChange={(e) => setBody(e.target.value)} className="ms-mono" placeholder='{"k":"v"}' /> },
     kvTab(query, setQuery, clean(query).length, 'Query'),
     kvTab(rest, setRest, clean(rest).length, 'REST'),
-    { key: 'pre', label: t('scenario.pre', '前置'), children: <ProcessorEditor value={pre as never} onChange={(v) => setPre(v)} allowed={['wait', 'plugin']} /> },
-    { key: 'post', label: t('scenario.post', '后置'), children: <ProcessorEditor value={post as never} onChange={(v) => setPost(v)} allowed={['wait', 'extract', 'script', 'sql']} /> },
-    { key: 'assert', label: t('apidef.assertions', '断言'), children: <AssertionEditor value={assertions as never} onChange={(v) => setAssertions(v)} /> },
+    { key: 'pre', label: t('scenario.pre', '前置'), children: <ProcessorEditor environmentId={env?.id} value={pre as never} onChange={(v) => setPre(v)} allowed={['wait', 'plugin', 'sql', 'script', 'sandboxScript']} /> },
+    { key: 'post', label: t('scenario.post', '后置'), children: <ProcessorEditor key={fieldAdditions.post} initialSelection={fieldAdditions.post ? post.length - 1 : 0} responseBody={resp?.body} value={post as never} onChange={(v) => setPost(v)} allowed={['wait', 'extract']} /> },
+    { key: 'assert', label: t('apidef.assertions', '断言'), children: <AssertionEditor key={fieldAdditions.assert} initialSelection={fieldAdditions.assert ? assertions.length - 1 : 0} responseBody={resp?.body} value={assertions as never} onChange={(v) => setAssertions(v)} /> },
     { key: 'auth', label: t('apidef.auth', '认证'), children: (
       <Space direction="vertical" style={{ width: '100%' }}>
         <Select value={authType} onChange={setAuthType} style={{ width: 200 }} options={[{ value: 'none', label: t('apidef.authNone', '无') }, { value: 'bearer', label: 'Bearer Token' }, { value: 'basic', label: 'Basic Auth' }]} />
@@ -2373,20 +2481,51 @@ function CustomRequestDrawer({
       }
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-        <Select value={method} onChange={setMethod} style={{ width: 110 }} options={['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS'].map((m) => ({ value: m, label: m }))} />
+        <Select value={method} onChange={setMethod} style={{ width: 110 }} options={HTTP_METHODS.map((m) => ({ value: m, label: m }))} />
         <Input value={url} onChange={(e) => setUrl(e.target.value)} className="ms-mono" style={{ flex: 1 }} placeholder={t('scenario.urlPlaceholder', '请输入包含 http/https 的完整 URL')} />
+        {!editStep && <Button onClick={() => setCurlOpen(true)}>{t('apidef.importCurl', '导入 cURL')}</Button>}
         <Button type="primary" icon={<ThunderboltOutlined />} loading={running} onClick={run}>{t('apidef.serverRun', '服务端执行')}</Button>
       </div>
-      <Tabs className="ms-detail-tabs" size="small" items={tabs} />
+      <CurlImportDrawer
+        open={open && curlOpen}
+        onClose={() => setCurlOpen(false)}
+        onImport={({ method, url, headers, body }) => {
+          setMethod(method)
+          setUrl(url)
+          setHeaders(headers.length ? headers.map(({ name, value }) => ({ key: name, value: value ?? '' })) : [blankKv()])
+          setBody(body ?? '')
+          setRequestTab(body === null ? undefined : 'body')
+          setQuery([blankKv()])
+          setRest([blankKv()])
+          setAuthType('none')
+          setAuthToken('')
+          setResp(null)
+          setErr('')
+          setLastReq(null)
+        }}
+      />
+      <Tabs className="ms-detail-tabs" size="small" activeKey={requestTab ?? tabs[0].key} onChange={setRequestTab} items={tabs} />
       <Divider style={{ margin: '12px 0' }} />
       <Typography.Text strong style={{ fontSize: 13 }}>{t('apidef.respContent', '响应内容')}</Typography.Text>
-      <DebugResultPanel running={running} resp={resp} err={err} req={lastReq} isHttp onRun={run} assertions={assertions as Record<string, unknown>[]} extractors={[...pre, ...post] as Record<string, unknown>[]} />
+      <DebugResultPanel running={running} resp={resp} err={err} req={lastReq} isHttp onRun={run} assertions={assertions as Record<string, unknown>[]} extractors={[...pre, ...post] as Record<string, unknown>[]}
+        onFieldAssertion={({ expression }) => {
+          setAssertions(current => [...current, { type: 'JsonPath', args: { path: expression, condition: 'EQUALS', expected: '' } }])
+          setFieldAdditions(current => ({ ...current, assert: current.assert + 1 }))
+          setRequestTab('assert')
+        }}
+        onFieldExtraction={({ expression, variable }) => {
+          setPost(current => [...current, { type: 'Extract', args: { extractors: [{ kind: 'JSON_PATH', expression, variable }] } }])
+          setFieldAdditions(current => ({ ...current, post: current.post + 1 }))
+          setRequestTab('post')
+        }} />
     </ResizableDrawer>
   )
 }
 
 function AddStepModal({
   type,
+  editPlugin,
+  envId,
   scenarioId,
   projectId,
   nextOrder,
@@ -2395,6 +2534,8 @@ function AddStepModal({
   onLocalAdd,
 }: {
   type: string
+  editPlugin?: ScenarioStep | null
+  envId?: string
   scenarioId: string
   projectId: string
   nextOrder: number
@@ -2409,18 +2550,52 @@ function AddStepModal({
   const [children, setChildren] = useState<Child[]>([])
   const [projCases, setProjCases] = useState<ApiCase[]>([])
   const [scns, setScns] = useState<Scenario[]>([])
+  const [pluginEnv, setPluginEnv] = useState('')
+  const [pluginEnvs, setPluginEnvs] = useState<Environment[]>([])
+  const [pluginProfiles, setPluginProfiles] = useState<Profile[]>([])
+  const [pluginLoading, setPluginLoading] = useState(false)
   const isControl = ['LOOP', 'IF', 'ONCE'].includes(type)
 
   useEffect(() => {
     if (type) {
       setChildren([])
       form.resetFields()
+      if (type === 'SCRIPT') {
+        const data = editPlugin?.control as Record<string, unknown> | undefined
+        form.setFieldsValue({ script: { ...newScriptAction(), ...data, inputText: JSON.stringify(data?.input ?? {}, null, 2) } })
+      } else if (editPlugin?.control) form.setFieldsValue(editPlugin.control)
       // CASE / controllers need the project-case dropdown; SCENARIO needs the scenario dropdown.
       if (isControl || type === 'CASE') api.projectCases(projectId).then((p) => setProjCases(p.items)).catch(() => undefined)
       if (type === 'SCENARIO') api.scenarios(projectId).then(setScns).catch(() => undefined)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [type])
+  }, [type, editPlugin])
+
+  useEffect(() => {
+    if (type !== 'PLUGIN') return
+    let live = true
+    setPluginEnv(envId || '')
+    api.environments(projectId).then(environments => {
+      if (!live) return
+      const enabled = environments.filter(environment => environment.enabled !== false)
+      setPluginEnvs(enabled)
+      setPluginEnv(current => current || enabled[0]?.id || '')
+    }).catch(() => { if (live) setPluginEnvs([]) })
+    return () => { live = false }
+  }, [type, envId, projectId])
+
+  useEffect(() => {
+    setPluginProfiles([])
+    if (type !== 'PLUGIN' || !pluginEnv) return
+    let live = true
+    setPluginLoading(true)
+    environmentPluginApi.configuration(pluginEnv).then(config => {
+      if (!live || !config.permissions.execute) return
+      const bound = new Set(config.bindings.filter(b => b.enabled && b.slot === 'connection').map(b => b.profileId))
+      setPluginProfiles(config.profiles.filter(p => p.enabled && bound.has(p.id) && ['postgres', 'mysql'].includes(p.pluginId)))
+    }).catch(() => {}).finally(() => { if (live) setPluginLoading(false) })
+    return () => { live = false }
+  }, [type, pluginEnv])
 
   const submit = async (v: any) => {
     setSaving(true)
@@ -2429,12 +2604,25 @@ function AddStepModal({
       let body: StepBody | null = null
       if (type === 'CASE' || type === 'SCENARIO') body = { kind: type, order: nextOrder, refId: v.refId }
       else if (type === 'REQUEST') body = { kind: 'REQUEST', order: nextOrder, request: { method: v.method, url: v.url, body: v.body || null, assertions: v.assertions || [] } }
+      else if (type === 'SCRIPT') {
+        const control = scriptActionPayload(v.script ?? newScriptAction())
+        if (!control) { message.warning('请选择脚本版本或填写源码，并检查输入和输出变量'); return }
+        body = { kind: 'SCRIPT', order: nextOrder, control }
+      }
+      else if (type === 'PLUGIN') {
+        if (!pluginProfiles.some(profile => profile.id === v.profileId)) {
+          message.warning('请选择此环境已启用的数据库插件')
+          return
+        }
+        body = { kind: 'PLUGIN', order: nextOrder, control: { profileId: v.profileId, query: v.query.trim(), output: v.output.trim() } }
+      }
       else if (type === 'TIMER') body = { kind: 'TIMER', order: nextOrder, control: { ms: Number(v.ms) || 1000 } }
       else if (type === 'LOOP') body = { kind: 'LOOP', order: nextOrder, control: { times: Number(v.times) || 1, children: childPayload } }
       else if (type === 'IF') body = { kind: 'IF', order: nextOrder, control: { variable: v.variable, operator: v.operator, value: v.value, children: childPayload } }
       else if (type === 'ONCE') body = { kind: 'ONCE', order: nextOrder, control: { children: childPayload } }
       if (!body) return
-      if (onLocalAdd) onLocalAdd(body)
+      if (editPlugin) await api.updateScenarioStep(scenarioId, editPlugin.id, { kind: body.kind, control: body.control })
+      else if (onLocalAdd) onLocalAdd(body)
       else await api.addStep(scenarioId, body)
       message.success(t('scenario.stepAdded', '步骤已添加'))
       onAdded()
@@ -2449,6 +2637,29 @@ function AddStepModal({
   return (
     <EditDrawer title={`${t('scenario.addPrefix', '添加')} · ${title}`} open={!!type} onCancel={onClose} onOk={() => form.submit()} confirmLoading={saving} width={620}>
       <Form form={form} layout="vertical" initialValues={{ method: 'GET', operator: '等于', times: 3, ms: 1000, assertions: [{ type: 'StatusIs', args: 200 }] }} onFinish={submit}>
+        {type === 'SCRIPT' && <Form.Item name="script"><ScriptActionEditor projectId={projectId} /></Form.Item>}
+        {type === 'PLUGIN' && <>
+          <Form.Item label="执行环境">
+            <Select aria-label="插件执行环境" value={pluginEnv || undefined}
+              options={pluginEnvs.map(environment => ({ value: environment.id, label: environment.name }))}
+              onChange={value => { setPluginEnv(value); form.setFieldValue('profileId', undefined) }}
+              placeholder="选择已绑定数据库插件的环境" />
+          </Form.Item>
+          <Form.Item name="profileId" label="数据库插件" rules={[{ required: true }]}>
+            <Select aria-label="数据库插件" loading={pluginLoading} placeholder="选择已绑定的数据库插件"
+              options={pluginProfiles.map(profile => ({ value: profile.id, label: `${profile.name} · ${profile.pluginId}` }))}
+              notFoundContent="此环境暂无可执行的数据库插件" />
+          </Form.Item>
+          <Form.Item name="query" label="只读 SQL" rules={[{ required: true, whitespace: true }]}>
+            <Input.TextArea rows={5} maxLength={16_384} placeholder="SELECT …" />
+          </Form.Item>
+          <Form.Item name="output" label="输出变量" extra="后续步骤可用 {{变量名#/rows/0/0}} 引用查询结果。" rules={[
+            { required: true, pattern: /^(?!__)[A-Za-z_][A-Za-z0-9_]{0,63}$/ },
+          ]}>
+            <Input placeholder="queryResult" maxLength={64} />
+          </Form.Item>
+          <Typography.Text type="secondary">运行时请选择绑定同一插件配置的环境。查询结果仅在本次执行中传递。</Typography.Text>
+        </>}
         {(type === 'CASE' || type === 'SCENARIO') && (
           <Form.Item name="refId" label={type === 'CASE' ? t('scenario.stepCase', '引用用例') : t('scenario.refSubScenario', '引用子场景')} rules={[{ required: true }]}>
             <Select
@@ -2766,7 +2977,7 @@ function NewScenarioTab({ projectId, modules, onCreated, active }: { projectId: 
   const [localSteps, setLocalSteps] = useState<StepBody[]>([])
   const [add, setAdd] = useState('')
   const [importOpen, setImportOpen] = useState(false)
-  const [customReqOpen, setCustomReqOpen] = useState(false)
+  const [customReqMode, setCustomReqMode] = useState<'REQUEST' | 'CURL' | null>(null)
   const nextOrder = localSteps.length + 1
   const save = async () => {
     if (!name.trim()) return message.warning(t('scenario.nameRequired', '请输入场景名'))
@@ -2817,27 +3028,28 @@ function NewScenarioTab({ projectId, modules, onCreated, active }: { projectId: 
               { type: 'group', label: t('scenario.grpRequest', '请求 / 场景'), children: [
                 { key: 'IMPORT', label: t('scenario.importSystem', '导入系统请求') },
                 { key: 'REQUEST', label: t('scenario.customRequest', '自定义请求') },
+                { key: 'CURL', label: t('apidef.importCurl', '导入 cURL') },
               ] },
               { type: 'group', label: t('scenario.grpLogic', '逻辑控制'), children: [
                 { key: 'LOOP', label: t('scenario.stepLoop', '循环控制器') },
                 { key: 'IF', label: t('scenario.stepIf', '条件控制器') },
                 { key: 'ONCE', label: t('scenario.stepOnce', '仅一次控制器') },
               ] },
-              { type: 'group', label: t('scenario.grpOther', '其他'), children: [{ key: 'TIMER', label: t('scenario.stepTimer', '等待时间') }] },
+              { type: 'group', label: t('scenario.grpOther', '其他'), children: [{ key: 'TIMER', label: t('scenario.stepTimer', '等待时间') }, { key: 'PLUGIN', label: t('scenario.stepPlugin', '插件操作') }, { key: 'SCRIPT', label: '脚本步骤' }] },
             ],
-            onClick: ({ key }) => { if (key === 'IMPORT') setImportOpen(true); else if (key === 'REQUEST') setCustomReqOpen(true); else setAdd(key) },
+            onClick: ({ key }) => { if (key === 'IMPORT') setImportOpen(true); else if ((key === 'REQUEST' || key === 'CURL')) setCustomReqMode(key); else setAdd(key) },
           }}
         >
           <Button type="dashed" icon={<PlusOutlined />} block>{t('scenario.addStep', '添加步骤')}</Button>
         </Dropdown>
       </div>
       <AddStepModal type={add} scenarioId="" projectId={projectId} nextOrder={nextOrder} onClose={() => setAdd('')} onAdded={() => setAdd('')} onLocalAdd={(b) => setLocalSteps((prev) => [...prev, b])} />
-      <CustomRequestDrawer open={customReqOpen} scenarioId="" nextOrder={nextOrder} onClose={() => setCustomReqOpen(false)} onAdded={() => undefined} onLocalAdd={(b) => setLocalSteps((prev) => [...prev, b])} />
+      <CustomRequestDrawer open={customReqMode !== null} importCurlOnOpen={customReqMode === 'CURL'} scenarioId="" nextOrder={nextOrder} onClose={() => setCustomReqMode(null)} onAdded={() => undefined} onLocalAdd={(b) => setLocalSteps((prev) => [...prev, b])} />
       <ImportRequestDrawer open={importOpen} scenarioId="" projectId={projectId} nextOrder={nextOrder} onClose={() => setImportOpen(false)} onImported={() => undefined} onLocalImport={(bs) => setLocalSteps((prev) => [...prev, ...bs])} />
     </div>
   )
   return (
-    <div style={{ padding: '12px 16px', height: '100%', overflow: 'auto' }}>
+    <div className="ms-scenario-scroll">
       {/* Toolbar portaled into the tab-bar right slot; unsaved scenario: env/run disabled, only save works. */}
       {active && slot && createPortal(
         <ScenarioActionBar

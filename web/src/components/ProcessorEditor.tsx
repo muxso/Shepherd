@@ -1,14 +1,19 @@
 import { useState } from 'react'
 import { Button, Dropdown, Empty, Input, InputNumber, Select, Space, Switch, Typography } from 'antd'
 import { PlusOutlined, DeleteOutlined } from '@ant-design/icons'
+import ScriptActionEditor, { newScriptAction, scriptActionPayload, type ScriptAction } from './ScriptActionEditor'
+import PreparationProfileSelect from './PreparationProfileSelect'
+import ResponseJsonPathPicker from './ResponseJsonPathPicker'
+import { useApp } from '../context'
 import { useI18n } from '../i18n'
 
 // Backend processor (api-runner Processor, serde tag=type / content=args).
 export type Processor = Record<string, unknown>
-export type OpKind = 'wait' | 'extract' | 'script' | 'sql' | 'plugin'
+export type OpKind = 'wait' | 'extract' | 'script' | 'sql' | 'plugin' | 'sandboxScript'
 
 type Extractor = { variable: string; kind: 'JSON_PATH' | 'REGEX'; expression: string }
 type Op =
+  | { kind: 'sandboxScript'; enabled: boolean; action: ScriptAction }
   | { kind: 'plugin'; enabled: boolean; profileId: string }
   | { kind: 'wait'; enabled: boolean; ms: number }
   | { kind: 'extract'; enabled: boolean; extractors: Extractor[] }
@@ -17,6 +22,7 @@ type Op =
 
 const emptyOp = (kind: OpKind): Op => {
   switch (kind) {
+    case 'sandboxScript': return { kind, enabled: true, action: newScriptAction() }
     case 'plugin': return { kind, enabled: true, profileId: '' }
     case 'wait':
       return { kind, enabled: true, ms: 1000 }
@@ -34,6 +40,7 @@ function parse(value?: Processor[]): Op[] {
   return value.map((p): Op => {
     const args = p.args as any
     switch (String(p.type)) {
+      case 'SandboxScript': return { kind: 'sandboxScript', enabled: true, action: { ...newScriptAction(), ...args, inputText: JSON.stringify(args?.input ?? {}, null, 2) } }
       case 'Plugin': return { kind: 'plugin', enabled: true, profileId: String(args?.profileId || '') }
       case 'Wait':
         return { kind: 'wait', enabled: true, ms: Number(args?.ms) || 0 }
@@ -54,6 +61,7 @@ function serialize(ops: Op[]): Processor[] {
     .filter((o) => o.enabled)
     .map((o): Processor => {
       switch (o.kind) {
+        case 'sandboxScript': return { type: 'SandboxScript', args: scriptActionPayload(o.action) ?? (o.action.mode === 'shared' ? { mode: 'shared', scriptId: o.action.scriptId ?? '', revision: o.action.revision ?? 0, input: null, output: o.action.output } : { mode: 'custom', language: o.action.language ?? 'javascript', code: o.action.code ?? '', input: null, output: o.action.output }) }
         case 'plugin': return { type: 'Plugin', args: { profileId: o.profileId } }
         case 'wait':
           return { type: 'Wait', args: { ms: o.ms } }
@@ -75,14 +83,21 @@ export default function ProcessorEditor({
   value,
   onChange,
   allowed,
+  responseBody,
+  initialSelection = 0,
+  environmentId,
 }: {
   value?: Processor[]
   onChange?: (v: Processor[]) => void
   allowed: OpKind[]
+  responseBody?: string
+  initialSelection?: number
+  environmentId?: string
 }) {
   const { t } = useI18n()
+  const { projectId } = useApp()
   const [ops, setOps] = useState<Op[]>(() => parse(value))
-  const [sel, setSel] = useState(0)
+  const [sel, setSel] = useState(initialSelection)
 
   const push = (next: Op[]) => {
     setOps(next)
@@ -95,6 +110,7 @@ export default function ProcessorEditor({
   }
 
   const LABEL: Record<OpKind, string> = {
+    sandboxScript: '公共 / 自定义脚本',
     plugin: '前置插件',
     wait: t('proc.wait', '等待时间'),
     extract: t('proc.extract', '提取参数'),
@@ -114,6 +130,19 @@ export default function ProcessorEditor({
           {t('proc.add', '操作')}
         </Button>
       </Dropdown>
+      {allowed.includes('extract') && <span style={{ marginLeft: 8 }}>
+        <ResponseJsonPathPicker label="从响应提取" responseBody={responseBody} onSelect={field => {
+          const extractor: Extractor = { ...field, kind: 'JSON_PATH' }
+          if (cur?.kind === 'extract' && cur.enabled) {
+            const emptyIndex = cur.extractors.findIndex(row => !row.variable && !row.expression)
+            update(sel, { extractors: emptyIndex < 0 ? [...cur.extractors, extractor]
+              : cur.extractors.map((row, index) => index === emptyIndex ? extractor : row) })
+          } else {
+            push([...ops, { kind: 'extract', enabled: true, extractors: [extractor] }])
+            setSel(ops.length)
+          }
+        }} />
+      </span>}
       {ops.length === 0 ? (
         <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('proc.empty', '无操作')} />
       ) : (
@@ -135,15 +164,15 @@ export default function ProcessorEditor({
               ))}
             </Space>
           </div>
-          <div style={{ flex: 1, padding: 12 }}>{cur && <OpEditor op={cur} onChange={(p) => update(sel, p)} t={t} preparation={!allowed.includes('extract')} />}</div>
+          <div style={{ flex: 1, minWidth: 0, padding: 12 }}>{cur?.kind === 'sandboxScript' ? <ScriptActionEditor projectId={projectId} value={cur.action} onChange={action => update(sel, { action })} /> : cur?.kind === 'plugin' ? <PreparationProfileSelect projectId={projectId} environmentId={environmentId} value={cur.profileId} onChange={profileId => update(sel, { profileId })} /> : cur && <OpEditor op={cur} onChange={(p) => update(sel, p)} t={t} responseBody={responseBody} preparation={!allowed.includes('extract')} />}</div>
         </div>
       )}
     </div>
   )
 }
 
-function OpEditor({ op, onChange, t, preparation }: { op: Op; onChange: (p: Partial<Op>) => void; t: (k: string, f?: string) => string; preparation: boolean }) {
-  if (op.kind === 'plugin') return <Space direction="vertical" style={{ width: '100%' }}><Typography.Text>选择环境后，按列表顺序执行引用的前置插件。配置和数据源凭据保存在插件中。</Typography.Text><Input aria-label="前置插件配置 ID" placeholder="从环境的前置配置复制配置 ID" value={op.profileId} onChange={e => onChange({ profileId: e.target.value })} /></Space>
+function OpEditor({ op, onChange, t, preparation, responseBody }: { op: Op; onChange: (p: Partial<Op>) => void; t: (k: string, f?: string) => string; preparation: boolean; responseBody?: string }) {
+  if (op.kind === 'sandboxScript' || op.kind === 'plugin') return null
   if (op.kind === 'wait') {
     return (
       <Space>
@@ -157,12 +186,19 @@ function OpEditor({ op, onChange, t, preparation }: { op: Op; onChange: (p: Part
     return (
       <Space direction="vertical" style={{ width: '100%' }} size={8}>
         {op.extractors.map((e, i) => (
-          <Space.Compact key={i} style={{ width: '100%' }}>
-            <Input placeholder={t('case.varName', '变量名')} value={e.variable} onChange={(ev) => setE(i, { variable: ev.target.value })} style={{ width: 160 }} className="ms-mono" />
-            <Select value={e.kind} onChange={(v) => setE(i, { kind: v })} style={{ width: 120 }} options={[{ value: 'JSON_PATH', label: 'JSONPath' }, { value: 'REGEX', label: t('proc.regex', '正则') }]} />
-            <Input placeholder={e.kind === 'JSON_PATH' ? '$.data.id' : '"id":\\s*"(\\w+)"'} value={e.expression} onChange={(ev) => setE(i, { expression: ev.target.value })} className="ms-mono" />
-            <Button icon={<DeleteOutlined />} onClick={() => onChange({ extractors: op.extractors.filter((_, idx) => idx !== i) })} />
-          </Space.Compact>
+          <div key={i}>
+            <Space.Compact style={{ width: '100%' }}>
+              <Input placeholder={t('case.varName', '变量名')} value={e.variable} onChange={(ev) => setE(i, { variable: ev.target.value })} style={{ width: '29%', flexShrink: 0 }} className="ms-mono" />
+              <Select value={e.kind} onChange={(v) => setE(i, { kind: v })} style={{ width: 120 }} options={[{ value: 'JSON_PATH', label: 'JSONPath' }, { value: 'REGEX', label: t('proc.regex', '正则') }]} />
+              <Input placeholder={e.kind === 'JSON_PATH' ? '$.data.id' : '"id":\\s*"(\\w+)"'} value={e.expression} onChange={(ev) => setE(i, { expression: ev.target.value })} className="ms-mono" />
+              <Button icon={<DeleteOutlined />} onClick={() => onChange({ extractors: op.extractors.filter((_, idx) => idx !== i) })} />
+
+            </Space.Compact>
+            {e.kind === 'JSON_PATH' && <div style={{ marginTop: 4 }}>
+              <ResponseJsonPathPicker responseBody={responseBody}
+                onSelect={field => setE(i, { expression: field.expression, variable: e.variable.trim() ? e.variable : field.variable })} />
+            </div>}
+          </div>
         ))}
         <Button icon={<PlusOutlined />} size="small" onClick={() => onChange({ extractors: [...op.extractors, { variable: '', kind: 'JSON_PATH', expression: '' }] })}>{t('case.addRow', '加一行')}</Button>
       </Space>
@@ -171,7 +207,7 @@ function OpEditor({ op, onChange, t, preparation }: { op: Op; onChange: (p: Part
   if (op.kind === 'script') {
     return (
       <Space direction="vertical" style={{ width: '100%' }} size={8}>
-        <Typography.Text type="warning" style={{ fontSize: 12 }}>{preparation ? 'JavaScript 前置处理支持服务端 HTTP 调试。使用 vars.name 读写字符串变量；批量用例和场景/计划运行暂不支持。' : '后置脚本暂不支持，执行时会明确报错。'}</Typography.Text>
+        <Typography.Text type="warning" style={{ fontSize: 12 }}>{preparation ? '服务端 HTTP 调试和场景步骤可执行 JavaScript 前置处理。使用 vars.name 读写字符串变量。' : '后置脚本暂不支持，执行时会明确报错。'}</Typography.Text>
         <Select value={op.lang} onChange={(v) => onChange({ lang: v })} style={{ width: 200 }} options={[{ value: 'JS', label: 'JavaScript' }, { value: 'BEANSHELL', label: 'BeanShell（暂不支持）', disabled: true }]} />
         <Input.TextArea rows={8} value={op.code} onChange={(e) => onChange({ code: e.target.value })} placeholder="// script" className="ms-mono" />
       </Space>
@@ -180,7 +216,7 @@ function OpEditor({ op, onChange, t, preparation }: { op: Op; onChange: (p: Part
   // sql
   return (
     <Space direction="vertical" style={{ width: '100%' }} size={8}>
-      <Typography.Text type="warning" style={{ fontSize: 12 }}>{preparation ? 'SQL 前置处理需要当前环境已应用的数据库插件配置 ID。查询以只读模式执行，名称非空时将结果报告保存为同名运行变量。' : '后置 SQL 暂不支持，执行时会明确报错。'}</Typography.Text>
+      <Typography.Text type="warning" style={{ fontSize: 12 }}>{preparation ? '填当前环境的数据库配置 ID。SQL 默认只读，名称作为结果变量。例如名称填 baseline，断言预期值可填 {{baseline#/rows/0/0}}。' : '后置 SQL 暂不支持，执行时会明确报错。'}</Typography.Text>
       <Input placeholder={t('proc.sqlName', 'SQL 操作名称')} value={op.name} onChange={(e) => onChange({ name: e.target.value })} />
       <Input placeholder={t('proc.datasource', '数据源')} value={op.datasource} onChange={(e) => onChange({ datasource: e.target.value })} />
       <Input.TextArea rows={6} value={op.sql} onChange={(e) => onChange({ sql: e.target.value })} placeholder="SELECT ..." className="ms-mono" />

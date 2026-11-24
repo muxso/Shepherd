@@ -501,7 +501,7 @@ function RelationsDrawer({ bug, projectId, onClose }: { bug: Bug | null; project
     Promise.all([
       api.requirements(projectId).then((p) => p.items ?? []).catch(() => []),
       api.scenarios(projectId).catch(() => []),
-      api.functionalCases(projectId).catch(() => []),
+      api.functionalCaseOptions(projectId).catch(() => []),
     ]).then(([reqs, scns, cases]) => {
       setNames({
         REQUIREMENT: new Map(reqs.map((r) => [r.id, r.title])),

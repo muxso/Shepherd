@@ -1,7 +1,9 @@
 use std::sync::Arc;
 
 use crate::application::rule_admin::now_text;
-use crate::domain::{parse_mentions, render_template, Channel, NewNotice, Robot, Rule};
+use crate::domain::{
+    parse_mentions, render_template, Channel, NewNotice, ReportCard, ReportContext, Robot, Rule,
+};
 use crate::ports::{NoticeRuleStore, NoticeStore, NoticeUserDirectory, RobotSender};
 
 /// Everything about a notification except who receives it.
@@ -15,6 +17,23 @@ pub struct NoticeEvent {
     pub resource_type: String,
     pub resource_id: String,
     pub operator: String,
+}
+
+impl NoticeEvent {
+    fn into_notice(self, receivers: Vec<String>, at_mention: bool) -> NewNotice {
+        NewNotice {
+            project_id: self.project_id.trim().to_owned(),
+            receivers,
+            category: self.category,
+            event_type: self.event_type,
+            title: self.title,
+            content: self.content,
+            resource_type: self.resource_type,
+            resource_id: self.resource_id,
+            operator: self.operator,
+            at_mention,
+        }
+    }
 }
 
 /// Producer facade injected into other contexts' routers. Notifications are
@@ -67,6 +86,35 @@ impl Notifier {
         self.deliver(receivers, event, false).await
     }
 
+    pub async fn notify_project_if_configured(
+        &self,
+        event: NoticeEvent,
+    ) -> Result<bool, crate::ports::RepoError> {
+        let Some(engine) = &self.rules else { return Ok(false) };
+        let rules = engine.store.rules_for_event(&event.project_id, &event.event_type).await?;
+        if rules.is_empty() {
+            let explicitly_configured = engine
+                .store
+                .list_rules(&event.project_id)
+                .await?
+                .iter()
+                .any(|rule| rule.event_type == event.event_type);
+            return Ok(explicitly_configured);
+        }
+        let in_app = rules.iter().any(|rule| rule.channels.contains(&Channel::InApp));
+        let receivers = if in_app {
+            self.directory.project_member_ids(&event.project_id).await?
+        } else {
+            Vec::new()
+        };
+        let notice = event.into_notice(receivers, false);
+        if let Ok(inbox_notice) = notice.clone().validated() {
+            self.store.insert(&inbox_notice).await?;
+        }
+        engine.dispatch_robots(&rules, &notice, None).await;
+        Ok(true)
+    }
+
     /// Parses `@name` mentions out of `text`, resolves them against the user
     /// directory and notifies the matches with `at_mention = true`.
     pub async fn notify_mentions(&self, text: &str, event: NoticeEvent) -> usize {
@@ -85,19 +133,8 @@ impl Notifier {
     }
 
     async fn deliver(&self, receivers: Vec<String>, event: NoticeEvent, at_mention: bool) -> usize {
-        let notice = NewNotice {
-            project_id: event.project_id.trim().to_string(),
-            receivers,
-            category: event.category,
-            event_type: event.event_type,
-            title: event.title,
-            content: event.content,
-            resource_type: event.resource_type,
-            resource_id: event.resource_id,
-            operator: event.operator,
-            at_mention,
-        };
-        let notice = match notice.validated() {
+        let notice = event.into_notice(receivers, at_mention);
+        let mut notice = match notice.validated() {
             Ok(n) => n,
             // No receivers / blank fields: nothing to send, not an error worth logging.
             Err(_) => return 0,
@@ -105,12 +142,20 @@ impl Notifier {
         // Routing rules: unscoped notices (no project) skip them and stay in-app.
         let mut in_app = true;
         if let Some(engine) = self.rules.as_ref().filter(|_| !notice.project_id.is_empty()) {
+            let context = if is_report_event(&notice.event_type) {
+                engine.store.report_context(&notice).await
+            } else {
+                None
+            };
+            if let Some(context) = &context {
+                notice.operator = context.trigger.clone();
+            }
             match engine.store.rules_for_event(&notice.project_id, &notice.event_type).await {
                 // No rules for this event: default behavior (in-app only).
                 Ok(rules) if rules.is_empty() => {}
                 Ok(rules) => {
                     in_app = rules.iter().any(|r| r.channels.contains(&Channel::InApp));
-                    engine.dispatch_robots(&rules, &notice).await;
+                    engine.dispatch_robots(&rules, &notice, context.as_ref()).await;
                 }
                 Err(e) => {
                     tracing::warn!(
@@ -144,12 +189,57 @@ struct RuleEngine {
 impl RuleEngine {
     /// Sends the rendered template of every ROBOT-channel rule to its enabled
     /// robots. Robot fan-out happens once per event, not per receiver.
-    async fn dispatch_robots(&self, rules: &[Rule], notice: &NewNotice) {
+    async fn dispatch_robots(
+        &self,
+        rules: &[Rule],
+        notice: &NewNotice,
+        context: Option<&ReportContext>,
+    ) {
         let time = now_text();
+        let base_url = if is_report_event(&notice.event_type) {
+            self.store.report_base_url().await
+        } else {
+            None
+        };
+        let report = ReportCard::from_notice(notice, base_url.as_deref(), &time);
         for rule in
             rules.iter().filter(|r| r.channels.contains(&Channel::Robot) && !r.robot_ids.is_empty())
         {
-            let text = render_template(&rule.template, &notice.title, &notice.operator, &time);
+            let text = match context {
+                Some(context) if !rule.template.trim().is_empty() => {
+                    context.interpolate(&rule.template, &notice.title, &notice.content, &time)
+                }
+                Some(context) => context.interpolate(
+                    "${project} · ${scenario}\n${content}\n时间 ${time}",
+                    &notice.title,
+                    &notice.content,
+                    &time,
+                ),
+                None => {
+                    let template = if rule.template.trim().is_empty() {
+                        "${title}\n${content}\n操作人 ${operator}\n时间 ${time}"
+                    } else {
+                        &rule.template
+                    };
+                    render_template(template, &notice.title, &notice.operator, &time)
+                        .replace("${content}", &notice.content)
+                }
+            };
+            let mut report = report.clone();
+            if let (Some(context), Some(report)) = (context, &mut report) {
+                report.project.clone_from(&context.project);
+                if !context.scenario.is_empty() {
+                    report.title.clone_from(&context.scenario);
+                }
+                if ReportContext::uses_context(&rule.template) {
+                    report.template_summary = context.interpolate(
+                        &rule.template,
+                        &notice.title,
+                        &report.details.join("\n"),
+                        &time,
+                    );
+                }
+            }
             let robots = match self.store.robots_by_ids(&rule.robot_ids).await {
                 Ok(robots) => robots,
                 Err(e) => {
@@ -160,16 +250,36 @@ impl RuleEngine {
             for robot in robots.into_iter().filter(|r| r.enabled) {
                 let sender = self.sender.clone();
                 let text = text.clone();
-                tokio::spawn(async move { send_with_retry(sender, robot, text).await });
+                let report = report.clone();
+                tokio::spawn(async move { send_with_retry(sender, robot, text, report).await });
             }
         }
     }
 }
 
+fn is_report_event(event: &str) -> bool {
+    matches!(
+        event,
+        "SCENARIO_RUN_SUCCEEDED"
+            | "SCENARIO_RUN_FAILED"
+            | "PLAN_RUN_FINISHED"
+            | "PLAN_SCHEDULE_FAILED"
+    )
+}
+
 /// One retry on failure; the outcome only shows up in the logs.
-async fn send_with_retry(sender: Arc<dyn RobotSender>, robot: Robot, text: String) {
+async fn send_with_retry(
+    sender: Arc<dyn RobotSender>,
+    robot: Robot,
+    text: String,
+    report: Option<ReportCard>,
+) {
     for attempt in 1..=2u32 {
-        match sender.send(&robot, &text).await {
+        let delivery = match &report {
+            Some(report) => sender.send_report(&robot, &text, report).await,
+            None => sender.send(&robot, &text).await,
+        };
+        match delivery {
             Ok(d) if (200..300).contains(&d.status) => {
                 tracing::info!(robot = %robot.name, status = d.status, "notice: robot webhook delivered");
                 return;
@@ -445,5 +555,78 @@ mod rule_tests {
         f.notifier.notify(vec!["u1".into()], event("BUG_ASSIGNED")).await;
         // First attempt fails, the retry lands.
         assert_eq!(wait_sent(&f.sender, 1).await.len(), 1);
+    }
+}
+
+#[cfg(test)]
+mod project_rule_tests {
+    use super::*;
+    use crate::adapters::{
+        InMemoryNoticeStore, InMemoryRuleStore, InMemoryUserDirectory, RecordingRobotSender,
+    };
+    use crate::domain::{Platform, RobotDraft, RuleDraft};
+    use crate::ports::ListQuery;
+
+    #[tokio::test]
+    async fn project_rule_routes_code_quality_and_can_mute_legacy_delivery() {
+        let inbox = Arc::new(InMemoryNoticeStore::new());
+        let rules = Arc::new(InMemoryRuleStore::new());
+        let sender = Arc::new(RecordingRobotSender::new());
+        let notifier = Notifier::new(
+            inbox.clone(),
+            Arc::new(InMemoryUserDirectory::new().with_member("project", "member")),
+        )
+        .with_rules(rules.clone(), sender.clone());
+        let event = NoticeEvent {
+            project_id: "project".into(),
+            category: "SONAR".into(),
+            title: "SonarQube".into(),
+            event_type: "SONAR_ANALYSIS_COMPLETED".into(),
+            content: "Gate failed".into(),
+            ..Default::default()
+        };
+        assert!(!notifier.notify_project_if_configured(event.clone()).await.unwrap());
+
+        let robot = rules
+            .insert_robot(&RobotDraft {
+                project_id: event.project_id.clone(),
+                name: "Project robot".into(),
+                platform: Platform::Wecom,
+                webhook_url: "https://example.invalid/robot".into(),
+                secret: String::new(),
+                enabled: true,
+            })
+            .await
+            .unwrap();
+        let mut draft = RuleDraft {
+            project_id: event.project_id.clone(),
+            event_type: event.event_type.clone(),
+            channels: vec![Channel::InApp, Channel::Robot],
+            robot_ids: vec![robot.id.clone()],
+            template: "${title}: ${content}".into(),
+            enabled: false,
+        };
+        let rule = rules.insert_rule(&draft).await.unwrap();
+        assert!(notifier.notify_project_if_configured(event.clone()).await.unwrap());
+        let query = ListQuery {
+            receiver_id: "member".into(),
+            page: 1,
+            page_size: 10,
+            ..Default::default()
+        };
+        assert_eq!(inbox.list(&query).await.unwrap().total, 0);
+
+        draft.enabled = true;
+        rules.update_rule(&rule.id, &draft).await.unwrap();
+        assert!(notifier.notify_project_if_configured(event).await.unwrap());
+        assert_eq!(inbox.list(&query).await.unwrap().total, 1);
+        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            while sender.sent().is_empty() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(sender.sent(), vec![(robot.id, "SonarQube: Gate failed".into())]);
     }
 }

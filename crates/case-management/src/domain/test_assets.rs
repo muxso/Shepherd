@@ -7,6 +7,8 @@ pub enum AssetError {
     Invalid(String),
     #[error("permission denied")]
     Forbidden,
+    #[error("{0}")]
+    AccessDenied(&'static str),
     #[error("asset not found")]
     NotFound,
     #[error("{0}")]

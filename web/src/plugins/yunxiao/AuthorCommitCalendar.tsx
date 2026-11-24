@@ -24,7 +24,7 @@ export default function AuthorCommitCalendar({month,commits,canRequirements,open
   const totalCommits=selected.reduce((n,p)=>n+p.commits.length,0)
   const totalRepos=new Set(selected.flatMap(p=>p.commits.map(c=>c.repoId))).size
   return <section className="yx-commit-calendar" aria-label="个人每日最后提交日历">
-    <div className="yx-calendar-guide"><span><i /> 已采集提交 · 点击成员查看当天详情</span><span>最后提交时间 · 上海时区</span></div>
+    <div className="yx-calendar-guide"><span><i /> 已采集提交 · 点击成员查看当天详情</span><span>最后提交时间 · 上海时间</span></div>
     {!days.size && <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="所选范围暂无已采集提交" />}
     <table className="yx-calendar-grid" aria-label={`${month} 每人每日最后提交时间`}>
       <thead><tr>{['一','二','三','四','五','六','日'].map((d,i)=><th key={d} scope="col" className={i>4?'is-weekend':''}>周{d}</th>)}</tr></thead>
@@ -43,7 +43,7 @@ export default function AuthorCommitCalendar({month,commits,canRequirements,open
     <div className="yx-calendar-footnote">时间取当天已采集提交中最后一次 Git 作者时间；空白不代表未工作。筛选成员、仓库或语言后，按筛选范围计算。</div>
     <Drawer title={selection ? `${selection.day} · 每日最后提交明细` : '每日最后提交明细'} width={780} styles={{wrapper:{maxWidth:'96vw'}}} motion={instantMotion} maskMotion={instantMotion} open={!!selection} onClose={()=>setSelection(null)} rootClassName="yx-calendar-drawer" destroyOnHidden>
       <div className="yx-calendar-overview"><div><span>活跃成员</span><strong>{selected.length}<small>人</small></strong></div><div><span>代码提交</span><strong>{totalCommits}<small>次</small></strong></div><div><span>涉及仓库</span><strong>{totalRepos}<small>个</small></strong></div></div>
-      <div className="yx-calendar-detail-toolbar"><span>成员提交明细 <small>上海时区</small></span>{selected.length>1 && <Input allowClear aria-label="搜索当天成员" placeholder="搜索成员或分组" value={search} onChange={e=>setSearch(e.target.value)} />}</div>
+      <div className="yx-calendar-detail-toolbar"><span>成员提交明细 <small>上海时间</small></span>{selected.length>1 && <Input allowClear aria-label="搜索当天成员" placeholder="搜索成员或分组" value={search} onChange={e=>setSearch(e.target.value)} />}</div>
       <div className="yx-calendar-list-head"><span>成员 / 分组</span><span>最后提交</span><span>提交 / 仓库</span><span /></div>
       <div key={`${selection?.day}-${selection?.person || 'all'}`} className="yx-calendar-members">
       {!visible.length && <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="没有匹配的成员" />}

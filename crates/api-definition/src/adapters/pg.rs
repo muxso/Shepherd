@@ -414,6 +414,19 @@ impl ApiDefinitionRepository for PgApiDefinitionRepository {
         rows.iter().map(row_to_case).collect()
     }
 
+    async fn cases_by_ids(
+        &self,
+        project_id: &str,
+        ids: &[String],
+    ) -> Result<Vec<ApiCase>, RepoError> {
+        let rows = sqlx::query(
+            "SELECT id, api_definition_id, project_id, name, method, url, body, assertions, processors,
+                    priority, case_status AS status, tags, headers, query_params, rest_params, auth, timeout_ms
+             FROM ms_api_case WHERE project_id=$1 AND id=ANY($2)",
+        ).bind(project_id).bind(ids).fetch_all(&self.pool).await.map_err(map_err)?;
+        rows.iter().map(row_to_case).collect()
+    }
+
     async fn insert_mock(&self, m: &NewApiMock) -> Result<ApiMock, RepoError> {
         let row = sqlx::query(
             "INSERT INTO ms_api_mock \

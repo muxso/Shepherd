@@ -12,5 +12,4 @@
 .yx-repo-track { width: 100%; background: var(--border-soft); }
 .yx-repo-share i { display: block; height: 4px; border-radius: 2px; background: var(--brand); margin-right: auto; }
 .yx-repo-share span { overflow-wrap: anywhere; }
-.yx-output-coverage { font-size: 12px; }
 @media(max-width: 1000px) { .yx-role-flow { grid-template-columns: 1fr; } .yx-role-arrow { transform: rotate(90deg); justify-self: center; } }

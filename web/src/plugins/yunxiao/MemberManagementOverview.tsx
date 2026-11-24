@@ -13,6 +13,5 @@ export default function MemberManagementOverview({ members, select }: { members:
       <Card size="small" title="交付需求中的缺陷占比"><ManagementBars items={rows(p => p.bugRate, p => `含 Bug 需求 ${p.bugAffectedRequirements} / 已交付需求 ${p.deliveredRequirements}，不等同个人缺陷责任`)} unit="%" onSelect={open} /></Card>
       <Card size="small" title="源责任缺陷重开占比"><ManagementBars items={rows(p => (p.reopenUnknownBugs || 0) > 0 ? null : p.reopenRate ?? null, p => `重开 ${p.reopenedBugs || 0} / 已处理 ${p.processedBugs || 0}；历史待核验 ${p.reopenUnknownBugs || 0}`)} unit="%" onSelect={open} /></Card>
     </div>
-    <p className="yx-management-notes">各图用于定位需要复核的记录。比例保留原始分母，缺少数据时显示待评价；不将不同岗位的数量和比例合成为总分。完整表格、月度对比与雷达可在“查看明细与雷达”中展开。</p>
   </div>
 }
